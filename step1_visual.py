@@ -83,6 +83,7 @@ def init_ocr():
     try:
         import easyocr
         print("  初始化 OCR 引擎（首次运行会下载模型，约 50 MB）…")
+        # 'ch_sim' = Simplified Chinese, 'en' = English
         reader = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
         return reader
     except ImportError:

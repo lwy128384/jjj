@@ -394,11 +394,20 @@ def main():
         for apath in glob.glob(os.path.join(args.annotation_dir, "*.json")):
             vname = Path(apath).stem
             for ext in (".mp4", ".avi", ".mov", ".mkv"):
-                vpath = os.path.join(
-                    os.path.dirname(args.annotation_dir), "lesson", vname + ext)
-                if os.path.exists(vpath):
-                    pairs.append((vpath, apath))
-                    break
+                # Search in LESSON_DIR (from config) first, then lesson/ sibling of annotation_dir
+                candidate_dirs = [
+                    LESSON_DIR,
+                    os.path.join(os.path.dirname(os.path.abspath(args.annotation_dir)),
+                                 "lesson"),
+                ]
+                for cdir in candidate_dirs:
+                    vpath = os.path.join(cdir, vname + ext)
+                    if os.path.exists(vpath):
+                        pairs.append((vpath, apath))
+                        break
+                else:
+                    continue
+                break
     else:
         print("请提供 --video + --annotation 或 --annotation_dir")
         parser.print_help()
