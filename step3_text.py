@@ -223,7 +223,11 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
 
     t_start = valid[0]["start"]
     t_end = valid[-1]["end"]
-    model_bounds = [round(t, 2) for t in model_times if t_start < t < t_end]
+    model_bounds = [
+        round(t, 2)
+        for t in model_times
+        if t_start + TIME_EPSILON < t < t_end - TIME_EPSILON
+    ]
     if not model_bounds:
         return filtered
 

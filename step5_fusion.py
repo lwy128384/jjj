@@ -48,6 +48,7 @@ except ImportError:
     SEGMENT_PADDING                   = 1.0
 
 MODEL_INTERFERENCE_MAX_GAP = 1.5
+TIME_EPSILON = 1e-6
 MODEL_PREDICT_EXCEPTIONS = (
     FileNotFoundError,
     OSError,
@@ -109,7 +110,7 @@ def _merge_interference_ranges(interferences):
     merged = [dict(interferences[0])]
     for cur in interferences[1:]:
         prev = merged[-1]
-        if cur["start"] <= prev["end"]:
+        if cur["start"] <= prev["end"] + TIME_EPSILON:
             prev["end"] = max(prev["end"], cur["end"])
             prev["duration"] = round(prev["end"] - prev["start"], 2)
             prev["reasons"] = list(dict.fromkeys(prev.get("reasons", []) + cur.get("reasons", [])))
@@ -132,7 +133,7 @@ def _build_model_interference_ranges(model_times):
     start = ts[0]
     prev = ts[0]
     for t in ts[1:]:
-        if t - prev <= MODEL_INTERFERENCE_MAX_GAP:
+        if t - prev <= MODEL_INTERFERENCE_MAX_GAP + TIME_EPSILON:
             prev = t
             continue
         dur = prev - start
