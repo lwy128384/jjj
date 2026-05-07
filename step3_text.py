@@ -290,7 +290,7 @@ def detect_boundaries(segments, jieba, visual_features=None):
     t_end   = valid[-1]["end"]
     bounds  = [t_start] + [m["time"] for m in merged] + [t_end]
 
-    filtered = normalize_boundaries(bounds[1:], t_start, t_end)
+    filtered = normalize_boundaries(bounds, t_start, t_end)
     filtered = try_refine_boundaries_with_model(filtered, valid, visual_features)
 
     # 生成知识点段
