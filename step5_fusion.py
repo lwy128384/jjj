@@ -138,7 +138,7 @@ def _build_model_interference_ranges(model_times):
     start = ts[0]
     prev = ts[0]
     for t in ts[1:]:
-        if t - prev < MODEL_INTERFERENCE_MAX_GAP:
+        if t - prev <= MODEL_INTERFERENCE_MAX_GAP:
             prev = t
             continue
         dur = prev - start

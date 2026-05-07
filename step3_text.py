@@ -45,6 +45,7 @@ except ImportError:
     MIN_TEXT_LENGTH        = 5
     NO_SPEECH_PROB_THRESHOLD = 0.50
 
+KNOWLEDGE_TITLE_PREFIX = "知识点"
 MODEL_PREDICT_EXCEPTIONS = (
     FileNotFoundError,
     OSError,
@@ -225,7 +226,7 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
 
     pseudo_text = {
         "knowledge_segments": [
-            {"id": i, "start": s, "end": e, "title": f"知识点{i+1}"}
+            {"id": i, "start": s, "end": e, "title": f"{KNOWLEDGE_TITLE_PREFIX}{i+1}"}
             for i, (s, e) in enumerate(zip(filtered[:-1], filtered[1:]))
         ],
         "boundaries": filtered,
