@@ -1,0 +1,362 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+步骤5: 多模态融合与视频剪辑
+  1. 确认干扰片段并剔除
+  2. 综合知识点边界与干扰标记生成剪辑指令
+  3. 输出以知识点命名的独立 MP4 片段
+  4. 生成 JSON 格式时间戳索引文件
+
+运行方式:
+  python step5_fusion.py --video D:/video/lesson/example.mp4
+
+输出:
+  D:/video/output/example/segments/知识点1-xxx.mp4  …
+  D:/video/output/example/final_index.json
+"""
+
+import os
+import sys
+import json
+import re
+import subprocess
+import argparse
+import datetime
+from pathlib import Path
+
+# ============================================================
+# 默认参数
+# ============================================================
+try:
+    import config as _cfg
+    OUTPUT_DIR                        = _cfg.OUTPUT_DIR
+    INTERFERENCE_TEACHER_ABSENT_RATIO = _cfg.INTERFERENCE_TEACHER_ABSENT_RATIO
+    INTERFERENCE_LOW_SPEECH_RATIO     = _cfg.INTERFERENCE_LOW_SPEECH_RATIO
+    INTERFERENCE_SILENCE_THRESHOLD    = _cfg.INTERFERENCE_SILENCE_THRESHOLD
+    INTERFERENCE_MIN_DURATION         = _cfg.INTERFERENCE_MIN_DURATION
+    SEGMENT_MERGE_GAP                 = _cfg.SEGMENT_MERGE_GAP
+    SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
+    SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
+except ImportError:
+    OUTPUT_DIR                        = r"D:\video\output"
+    INTERFERENCE_TEACHER_ABSENT_RATIO = 0.70
+    INTERFERENCE_LOW_SPEECH_RATIO     = 0.80
+    INTERFERENCE_SILENCE_THRESHOLD    = 15.0
+    INTERFERENCE_MIN_DURATION         = 5.0
+    SEGMENT_MERGE_GAP                 = 5.0
+    SEGMENT_MIN_DURATION              = 20.0
+    SEGMENT_PADDING                   = 1.0
+
+
+# ============================================================
+# 工具函数
+# ============================================================
+
+def get_output_dir(video_path, base_output_dir=None):
+    base = base_output_dir or OUTPUT_DIR
+    name = Path(video_path).stem
+    out  = os.path.join(base, name)
+    os.makedirs(out, exist_ok=True)
+    return out, name
+
+
+def check_ffmpeg():
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+
+def load_multimodal_index(output_dir):
+    p = os.path.join(output_dir, "multimodal_index.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"找不到多模态索引，请先运行步骤4: {p}")
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def sanitize_filename(name):
+    """去除 Windows 文件名非法字符，并截断"""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
+    return name[:80].strip()
+
+
+# ============================================================
+# 干扰检测
+# ============================================================
+
+def detect_interference(multimodal_index):
+    """
+    干扰规则（满足任一即标记）：
+      1. 某知识点段内教师缺席比例 > 阈值
+      2. 某知识点段内静默比例 > 阈值
+      3. 全局连续静默 > 阈值时长
+    """
+    series   = multimodal_index["time_series"]
+    know_segs = multimodal_index["knowledge_segments"]
+    interferences = []
+
+    # 按知识点段分析
+    for ks in know_segs:
+        pts = [p for p in series if ks["start"] <= p["time"] <= ks["end"]]
+        if not pts:
+            continue
+        n = len(pts)
+        absent_ratio  = sum(1 for p in pts if not p["teacher_present"]) / n
+        silence_ratio = sum(1 for p in pts if p["is_silence"]) / n
+
+        reasons = []
+        if absent_ratio  > INTERFERENCE_TEACHER_ABSENT_RATIO:
+            reasons.append(f"教师缺席 {absent_ratio:.0%}")
+        if silence_ratio > INTERFERENCE_LOW_SPEECH_RATIO:
+            reasons.append(f"静默占比 {silence_ratio:.0%}")
+
+        if reasons:
+            interferences.append({
+                "start":               ks["start"],
+                "end":                 ks["end"],
+                "duration":            ks["end"] - ks["start"],
+                "reasons":             reasons,
+                "teacher_absent_ratio": round(absent_ratio,  3),
+                "silence_ratio":        round(silence_ratio, 3),
+                "source":              "knowledge_segment",
+            })
+
+    # 扫描连续静默段
+    sil_start = None
+    for pt in series:
+        if pt["is_silence"]:
+            if sil_start is None:
+                sil_start = pt["time"]
+        else:
+            if sil_start is not None:
+                sil_dur = pt["time"] - sil_start
+                if sil_dur >= INTERFERENCE_SILENCE_THRESHOLD:
+                    interferences.append({
+                        "start":    sil_start,
+                        "end":      pt["time"],
+                        "duration": sil_dur,
+                        "reasons":  [f"连续静默 {sil_dur:.1f}s"],
+                        "teacher_absent_ratio": 0.0,
+                        "silence_ratio":        1.0,
+                        "source":   "silence_scan",
+                    })
+                sil_start = None
+
+    return interferences
+
+
+# ============================================================
+# 生成剪辑指令
+# ============================================================
+
+def build_edit_commands(know_segs, interferences, duration):
+    """过滤干扰、合并短间隔、添加缓冲，输出剪辑片段列表"""
+
+    def overlaps_interference(start, end):
+        for intf in interferences:
+            ovlp = min(end, intf["end"]) - max(start, intf["start"])
+            if ovlp > 0 and ovlp / max(end - start, 0.001) > 0.5:
+                return True
+        return False
+
+    valid = []
+    for ks in know_segs:
+        if overlaps_interference(ks["start"], ks["end"]):
+            continue
+        seg_dur = ks["end"] - ks["start"]
+        if seg_dur < SEGMENT_MIN_DURATION:
+            continue
+        seg_s = max(0.0,     ks["start"] - SEGMENT_PADDING)
+        seg_e = min(duration, ks["end"]   + SEGMENT_PADDING)
+        valid.append({
+            "original_id": ks["id"],
+            "title":       ks["title"],
+            "start":       round(seg_s, 2),
+            "end":         round(seg_e, 2),
+            "duration":    round(seg_e - seg_s, 2),
+            "keywords":    ks.get("keywords", []),
+        })
+
+    # 合并间隔过短的相邻段
+    merged = []
+    for seg in valid:
+        if merged and seg["start"] - merged[-1]["end"] < SEGMENT_MERGE_GAP:
+            prev = merged[-1]
+            prev["end"]      = seg["end"]
+            prev["duration"] = prev["end"] - prev["start"]
+            prev["title"]    = prev["title"] + "+" + seg["title"]
+            prev["keywords"] = list(dict.fromkeys(prev["keywords"] + seg["keywords"]))
+        else:
+            merged.append(dict(seg))  # 拷贝
+
+    # 重新编号
+    for i, seg in enumerate(merged):
+        seg["id"] = i
+
+    return merged
+
+
+# ============================================================
+# 视频剪切
+# ============================================================
+
+def cut_segment(video_path, start, end, out_path):
+    """ffmpeg 剪切片段，优先 stream copy（快），失败则重新编码"""
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    # 快速模式：stream copy
+    cmd_copy = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-ss", str(start), "-to", str(end),
+        "-c:v", "copy", "-c:a", "copy",
+        "-avoid_negative_ts", "1",
+        str(out_path),
+    ]
+    r = subprocess.run(cmd_copy, capture_output=True, text=True)
+    if r.returncode == 0 and os.path.getsize(out_path) > 1024:
+        return
+
+    # 重新编码模式（精确但慢）
+    print(f"    stream copy 失败，改用重新编码…")
+    cmd_enc = [
+        "ffmpeg", "-y",
+        "-ss", str(start),
+        "-i", str(video_path),
+        "-t",  str(round(end - start, 2)),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        str(out_path),
+    ]
+    r2 = subprocess.run(cmd_enc, capture_output=True, text=True)
+    if r2.returncode != 0:
+        raise RuntimeError(f"ffmpeg 剪切失败:\n{r2.stderr[-600:]}")
+
+
+# ============================================================
+# 核心融合
+# ============================================================
+
+def fuse_and_cut(video_path, output_dir, video_name):
+    print(f"\n[步骤5] 多模态融合与剪辑: {video_name}")
+
+    if not check_ffmpeg():
+        raise RuntimeError(
+            "未找到 ffmpeg！\n"
+            "Windows 安装：\n"
+            "  1. 下载 https://www.gyan.dev/ffmpeg/builds/\n"
+            "  2. 解压到 C:\\ffmpeg\n"
+            "  3. 将 C:\\ffmpeg\\bin 加入系统 PATH"
+        )
+
+    idx      = load_multimodal_index(output_dir)
+    duration = idx["duration"]
+    know_segs = idx["knowledge_segments"]
+    print(f"  时长: {duration:.1f}s  知识点数: {len(know_segs)}")
+
+    # 干扰检测
+    print("  检测干扰片段…")
+    interferences = detect_interference(idx)
+    print(f"  共 {len(interferences)} 个干扰片段")
+    for intf in interferences:
+        print(f"    [{intf['start']:.0f}s–{intf['end']:.0f}s]  {', '.join(intf['reasons'])}")
+
+    # 生成剪辑指令
+    print("  生成剪辑指令…")
+    commands = build_edit_commands(know_segs, interferences, duration)
+    print(f"  有效片段: {len(commands)} 个")
+
+    # 剪切视频
+    seg_dir = os.path.join(output_dir, "segments")
+    os.makedirs(seg_dir, exist_ok=True)
+
+    clips = []
+    for cmd in commands:
+        fname    = sanitize_filename(cmd["title"]) + ".mp4"
+        out_path = os.path.join(seg_dir, fname)
+        print(f"  剪切 [{cmd['start']:.0f}s–{cmd['end']:.0f}s] → {fname}")
+        try:
+            cut_segment(video_path, cmd["start"], cmd["end"], out_path)
+            file_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+            clips.append({
+                "id":           cmd["id"],
+                "title":        cmd["title"],
+                "start":        cmd["start"],
+                "end":          cmd["end"],
+                "duration":     cmd["duration"],
+                "output_file":  out_path,
+                "file_size_mb": round(file_size / 1024 / 1024, 2),
+                "keywords":     cmd["keywords"],
+                "status":       "ok",
+            })
+        except Exception as e:
+            print(f"    ✗ 剪切失败: {e}")
+            clips.append({
+                "id":    cmd["id"],
+                "title": cmd["title"],
+                "start": cmd["start"],
+                "end":   cmd["end"],
+                "status": "failed",
+                "error":  str(e),
+            })
+
+    # 汇总 removed 片段
+    removed = []
+    for intf in interferences:
+        removed.append({
+            "start":    intf["start"],
+            "end":      intf["end"],
+            "duration": intf["duration"],
+            "reasons":  intf["reasons"],
+        })
+
+    final_index = {
+        "video_name":       video_name,
+        "video_path":       str(video_path),
+        "processed_at":     datetime.datetime.now().isoformat(timespec="seconds"),
+        "total_clips":      len(clips),
+        "clips":            clips,
+        "removed_segments": removed,
+        "stats": {
+            "total_output_clips":      len([c for c in clips if c.get("status") == "ok"]),
+            "total_removed_segments":  len(removed),
+            "total_output_duration_s": sum(c.get("duration", 0)
+                                           for c in clips if c.get("status") == "ok"),
+        },
+    }
+
+    out_file = os.path.join(output_dir, "final_index.json")
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(final_index, f, ensure_ascii=False, indent=2)
+
+    print(f"\n  ✓ 剪辑完成")
+    print(f"    输出片段: {final_index['stats']['total_output_clips']} 个")
+    print(f"    剔除片段: {final_index['stats']['total_removed_segments']} 个")
+    print(f"    总输出时长: {final_index['stats']['total_output_duration_s']:.0f}s")
+    print(f"    索引文件: {out_file}")
+    print(f"    视频目录: {seg_dir}")
+    return final_index
+
+
+# ============================================================
+# 入口
+# ============================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="步骤5: 多模态融合与视频剪辑")
+    parser.add_argument("--video",  required=True, help="视频文件路径")
+    parser.add_argument("--output", default=OUTPUT_DIR, help="输出根目录")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.video):
+        print(f"错误: 视频不存在: {args.video}")
+        sys.exit(1)
+
+    out_dir, vname = get_output_dir(args.video, args.output)
+    fuse_and_cut(args.video, out_dir, vname)
+
+
+if __name__ == "__main__":
+    main()
