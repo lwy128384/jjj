@@ -125,7 +125,12 @@ def _merge_interference_ranges(interferences):
 
 
 def _build_model_interference_ranges(model_times):
-    """Convert model-predicted interference timestamps into contiguous ranges."""
+    """
+    Convert model-predicted interference timestamps into contiguous ranges.
+
+    Timestamps are considered contiguous when adjacent points are within
+    MODEL_INTERFERENCE_MAX_GAP seconds and are merged into the same range.
+    """
     if not model_times:
         return []
     ts = sorted(set(round(float(t), 2) for t in model_times))

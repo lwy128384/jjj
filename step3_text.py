@@ -166,7 +166,18 @@ def cosine_distance(u, v):
 
 
 def normalize_boundaries(bounds, t_start, t_end):
-    """Filter too-short intervals and split overly long intervals."""
+    """
+    Normalize boundary timestamps.
+
+    Args:
+        bounds: Candidate boundary timestamps (seconds).
+        t_start: Start timestamp (seconds) for the analyzed range.
+        t_end: End timestamp (seconds) for the analyzed range.
+
+    Returns:
+        A sorted boundary timestamp list after short-interval filtering and
+        long-interval splitting.
+    """
     filtered = [round(t_start, 2)]
     for t in sorted(bounds):
         if abs(t - filtered[-1]) < TIME_EPSILON:
@@ -189,6 +200,15 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
     """
     Refine semantic boundaries with the trained boundary model when available.
     Falls back to rule-based boundaries when model inference is unavailable.
+
+    Args:
+        filtered: Rule-based normalized boundaries.
+        valid: Valid ASR segments used for boundary detection.
+        visual_features: Optional visual feature dictionary.
+
+    Returns:
+        Refined boundary list when model predictions are usable; otherwise the
+        original rule-based boundary list.
     """
     try:
         from train import predict_boundaries
