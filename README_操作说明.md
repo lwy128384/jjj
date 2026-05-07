@@ -23,7 +23,7 @@
 
 | 步骤 | 文件 | 功能 |
 |------|------|------|
-| 1 | `step1_visual.py` | 教师讲台检测（全屏PPT时默认教师在讲台） |
+| 1 | `step1_visual.py` | 教师讲台检测 + PPT OCR + 翻页检测 |
 | 2 | `step2_audio.py` | 语音转录 + 说话人区分 + 置信度标记 |
 | 3 | `step3_text.py` | 语义分析 + 知识点边界检测 |
 | 4 | `step4_align.py` | 多模态时间对齐，生成统一索引 |
@@ -235,7 +235,10 @@ python step1_visual.py --video D:\video\lesson\高数第一章.mp4
 **功能**：
 - 每秒采样一帧
 - 背景减除检测教师是否在讲台区域
-- 若检测到全屏PPT画面，默认教师在讲台区域内
+- 帧间 SSIM 检测幻灯片翻页
+- EasyOCR 识别每张新幻灯片文字内容
+
+**首次运行**：自动下载 EasyOCR 中文模型（约 50 MB）
 
 **输出**：`output/高数第一章/visual_features.json`
 
@@ -447,7 +450,9 @@ venv\Scripts\activate
 
 ### Q3: OCR 识别中文效果差
 **解决**：
-- 当前视觉步骤不再执行 OCR；如需 OCR，请在自定义版本中额外实现。
+- 确保视频中 PPT 文字清晰，分辨率 ≥ 720p
+- 调整 `config.py` 中的 `PPT_REGION`，使其精准覆盖 PPT 区域
+- 调低 `OCR_CONFIDENCE_THRESHOLD`（如改为 0.3）
 
 ### Q4: 教师检测不准确（总说不在讲台）
 **解决**：
@@ -487,6 +492,8 @@ venv\Scripts\activate
 |------|--------|------|----------|
 | `VISUAL_SAMPLE_FPS` | 1 | 每秒采样帧数 | 降低可加快速度 |
 | `PODIUM_REGION` | (0.1,0.25,0.9,0.95) | 讲台区域比例 | 根据视频布局调整 |
+| `PPT_REGION` | (0,0,1,0.8) | PPT 区域比例 | 如 PPT 在右半边改为 (0.5,0,1,1) |
+| `SLIDE_CHANGE_THRESHOLD` | 0.70 | SSIM 翻页阈值 | 越小越灵敏 |
 | `TEACHER_PRESENCE_THRESHOLD` | 0.05 | 教师检测阈值 | 减小可提高检测率 |
 | `WHISPER_MODEL_SIZE` | "base" | Whisper 模型 | tiny/base/small/medium |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
@@ -506,7 +513,13 @@ venv\Scripts\activate
   "fps": 25.0,
   "duration": 3600.0,
   "teacher_timeline": [
-    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12, "full_screen_ppt": false}
+    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12}
+  ],
+  "slide_transitions": [
+    {"time": 45.0, "ssim": 0.42, "slide_idx": 1}
+  ],
+  "ppt_content": [
+    {"time": 45.0, "slide_idx": 1, "text": "第一章 绪论"}
   ]
 }
 ```
