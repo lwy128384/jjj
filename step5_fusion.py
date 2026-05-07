@@ -48,6 +48,14 @@ except ImportError:
     SEGMENT_PADDING                   = 1.0
 
 MODEL_INTERFERENCE_MAX_GAP = 1.5
+MODEL_PREDICT_EXCEPTIONS = (
+    FileNotFoundError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    RuntimeError,
+)
 
 
 # ============================================================
@@ -124,7 +132,7 @@ def _build_model_interference_ranges(model_times):
     start = ts[0]
     prev = ts[0]
     for t in ts[1:]:
-        if t - prev <= MODEL_INTERFERENCE_MAX_GAP:
+        if t - prev < MODEL_INTERFERENCE_MAX_GAP:
             prev = t
             continue
         dur = prev - start
@@ -333,7 +341,8 @@ def fuse_and_cut(video_path, output_dir, video_name):
             model_times = predict_interference(idx)
             if model_times:
                 print(f"  已应用训练干扰模型（命中时刻 {len(model_times)} 个）")
-        except Exception:
+        except MODEL_PREDICT_EXCEPTIONS as e:
+            print(f"  训练干扰模型调用失败，回退规则检测: {e}")
             model_times = []
     interferences = detect_interference(idx, model_times=model_times)
     print(f"  共 {len(interferences)} 个干扰片段")

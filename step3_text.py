@@ -45,6 +45,15 @@ except ImportError:
     MIN_TEXT_LENGTH        = 5
     NO_SPEECH_PROB_THRESHOLD = 0.50
 
+MODEL_PREDICT_EXCEPTIONS = (
+    FileNotFoundError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    RuntimeError,
+)
+
 
 # ============================================================
 # 工具函数
@@ -159,7 +168,7 @@ def normalize_boundaries(bounds, t_start, t_end):
     """过滤过短间隔并拆分过长间隔"""
     filtered = [round(t_start, 2)]
     for t in sorted(bounds):
-        if t <= filtered[-1]:
+        if t == filtered[-1]:
             continue
         dt = t - filtered[-1]
         if dt < MIN_KNOWLEDGE_DURATION:
@@ -205,7 +214,7 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
     timeline = build_timeline(visual_features, pseudo_audio, pseudo_text, duration)
     try:
         model_times = predict_boundaries({"time_series": timeline})
-    except Exception as e:
+    except MODEL_PREDICT_EXCEPTIONS as e:
         print(f"  训练边界模型调用失败，回退规则边界: {e}")
         return filtered
     if not model_times:
