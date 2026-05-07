@@ -183,7 +183,7 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
     try:
         from train import predict_boundaries
         from step4_align import build_timeline
-    except Exception:
+    except ImportError:
         return filtered
 
     if not valid:

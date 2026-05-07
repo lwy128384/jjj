@@ -130,7 +130,8 @@ def _build_model_interference_ranges(model_times):
         dur = prev - start
         if dur >= INTERFERENCE_MIN_DURATION:
             ranges.append((start, prev))
-        start = prev = t
+        start = t
+        prev = t
     dur = prev - start
     if dur >= INTERFERENCE_MIN_DURATION:
         ranges.append((start, prev))
@@ -324,11 +325,16 @@ def fuse_and_cut(video_path, output_dir, video_name):
     model_times = []
     try:
         from train import predict_interference
-        model_times = predict_interference(idx)
-        if model_times:
-            print(f"  已应用训练干扰模型（命中时刻 {len(model_times)} 个）")
-    except Exception:
-        model_times = []
+    except ImportError:
+        predict_interference = None
+
+    if predict_interference is not None:
+        try:
+            model_times = predict_interference(idx)
+            if model_times:
+                print(f"  已应用训练干扰模型（命中时刻 {len(model_times)} 个）")
+        except Exception:
+            model_times = []
     interferences = detect_interference(idx, model_times=model_times)
     print(f"  共 {len(interferences)} 个干扰片段")
     for intf in interferences:
