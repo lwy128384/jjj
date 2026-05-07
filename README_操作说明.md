@@ -235,6 +235,7 @@ python step1_visual.py --video D:\video\lesson\高数第一章.mp4
 **功能**：
 - 每秒采样一帧
 - 背景减除检测教师是否在讲台区域
+- 若出现全屏PPT画面，默认教师在讲台区域内
 - 帧间 SSIM 检测幻灯片翻页
 - EasyOCR 识别每张新幻灯片文字内容
 
@@ -513,7 +514,7 @@ venv\Scripts\activate
   "fps": 25.0,
   "duration": 3600.0,
   "teacher_timeline": [
-    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12}
+    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12, "full_screen_ppt": false}
   ],
   "slide_transitions": [
     {"time": 45.0, "ssim": 0.42, "slide_idx": 1}

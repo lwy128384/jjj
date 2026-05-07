@@ -108,6 +108,31 @@ def run_ocr(reader, frame, region, min_conf):
         return ""
 
 
+def is_fullscreen_ppt(frame):
+    """
+    粗略判断全屏 PPT 画面：
+    - 亮部占比高
+    - 低饱和像素占比高（大面积白底/浅色底）
+    - 边缘密度达到一定水平（存在文字线条）
+    """
+    if frame is None or frame.size == 0:
+        return False
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    edges = cv2.Canny(gray, 80, 160)
+
+    bright_ratio = float(np.mean(gray > 180))
+    low_sat_ratio = float(np.mean(hsv[:, :, 1] < 40))
+    edge_ratio = float(np.mean(edges > 0))
+
+    return bool(
+        bright_ratio > 0.35 and
+        low_sat_ratio > 0.45 and
+        edge_ratio > 0.02
+    )
+
+
 # ============================================================
 # 核心分析
 # ============================================================
@@ -174,12 +199,16 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN,   kernel)
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_DILATE, kernel)
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
-            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD)
+            full_ppt    = is_fullscreen_ppt(frame)
+            in_podium   = bool(
+                fg_ratio > TEACHER_PRESENCE_THRESHOLD or full_ppt
+            )
 
             teacher_timeline.append({
                 "time":        ts,
                 "in_podium":   in_podium,
                 "motion_ratio": round(fg_ratio, 4),
+                "full_screen_ppt": full_ppt,
             })
 
             # —— 幻灯片切换检测 ——
