@@ -53,6 +53,7 @@ MODEL_PREDICT_EXCEPTIONS = (
     KeyError,
     RuntimeError,
 )
+TIME_EPSILON = 1e-6
 
 
 # ============================================================
@@ -168,7 +169,7 @@ def normalize_boundaries(bounds, t_start, t_end):
     """过滤过短间隔并拆分过长间隔"""
     filtered = [round(t_start, 2)]
     for t in sorted(bounds):
-        if t == filtered[-1]:
+        if abs(t - filtered[-1]) < TIME_EPSILON:
             continue
         dt = t - filtered[-1]
         if dt < MIN_KNOWLEDGE_DURATION:
@@ -179,7 +180,7 @@ def normalize_boundaries(bounds, t_start, t_end):
             for _ in range(1, n + 1):
                 filtered.append(round(filtered[-1] + step, 2))
         filtered.append(round(t, 2))
-    if filtered[-1] != round(t_end, 2):
+    if abs(filtered[-1] - round(t_end, 2)) >= TIME_EPSILON:
         filtered.append(round(t_end, 2))
     return filtered
 
