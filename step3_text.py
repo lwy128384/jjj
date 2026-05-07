@@ -170,7 +170,7 @@ def normalize_boundaries(bounds, t_start, t_end):
             for _ in range(1, n + 1):
                 filtered.append(round(filtered[-1] + step, 2))
         filtered.append(round(t, 2))
-    if filtered[-1] < round(t_end, 2):
+    if filtered[-1] != round(t_end, 2):
         filtered.append(round(t_end, 2))
     return filtered
 
@@ -203,7 +203,11 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
     pseudo_audio = {"segments": valid}
 
     timeline = build_timeline(visual_features, pseudo_audio, pseudo_text, duration)
-    model_times = predict_boundaries({"time_series": timeline})
+    try:
+        model_times = predict_boundaries({"time_series": timeline})
+    except Exception as e:
+        print(f"  训练边界模型调用失败，回退规则边界: {e}")
+        return filtered
     if not model_times:
         return filtered
 
