@@ -47,6 +47,8 @@ except ImportError:
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
 
+MODEL_INTERFERENCE_MAX_GAP = 1.5
+
 
 # ============================================================
 # 工具函数
@@ -82,6 +84,11 @@ def sanitize_filename(name):
     return name[:80].strip()
 
 
+def _merge_source_labels(prev_source, cur_source):
+    labels = str(prev_source).split("+") + str(cur_source).split("+")
+    return "+".join(sorted(set([x for x in labels if x])))
+
+
 # ============================================================
 # 干扰检测
 # ============================================================
@@ -98,7 +105,7 @@ def _merge_interference_ranges(interferences):
             prev["end"] = max(prev["end"], cur["end"])
             prev["duration"] = round(prev["end"] - prev["start"], 2)
             prev["reasons"] = list(dict.fromkeys(prev.get("reasons", []) + cur.get("reasons", [])))
-            prev["source"] = "+".join(sorted(set(str(prev.get("source", "")).split("+") + str(cur.get("source", "")).split("+"))))
+            prev["source"] = _merge_source_labels(prev.get("source", ""), cur.get("source", ""))
             prev["teacher_absent_ratio"] = round(max(prev.get("teacher_absent_ratio", 0.0),
                                                      cur.get("teacher_absent_ratio", 0.0)), 3)
             prev["silence_ratio"] = round(max(prev.get("silence_ratio", 0.0),
@@ -117,7 +124,7 @@ def _build_model_interference_ranges(model_times):
     start = ts[0]
     prev = ts[0]
     for t in ts[1:]:
-        if t - prev <= 1.5:
+        if t - prev <= MODEL_INTERFERENCE_MAX_GAP:
             prev = t
             continue
         dur = prev - start

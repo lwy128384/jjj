@@ -214,7 +214,7 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
         return filtered
 
     merged_bounds = sorted(set(filtered + model_bounds + [t_start, t_end]))
-    refined = normalize_boundaries(merged_bounds[1:], t_start, t_end)
+    refined = normalize_boundaries(merged_bounds, t_start, t_end)
     if len(refined) >= 2:
         print(f"  已应用训练边界模型（新增候选边界 {len(model_bounds)} 个）")
         return refined
