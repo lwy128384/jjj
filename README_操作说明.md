@@ -114,12 +114,45 @@ D:\video\
 
 ---
 
-### 3.5 安装 Python 依赖
+### 3.5 创建虚拟环境（强烈推荐）
 
-打开 cmd，切换到项目目录：
+> **为什么需要虚拟环境？**
+> 本项目依赖版本较多且较为固定（如 numpy 1.26、torch 2.2 等）。
+> 使用虚拟环境可以：
+> - 避免与系统其他 Python 项目的版本冲突
+> - 保持系统 Python 环境干净
+> - 随时删除整个 `venv` 文件夹即可完全卸载所有依赖
+
+在 cmd 中执行：
 
 ```cmd
 cd D:\video
+
+:: 创建虚拟环境（只需执行一次）
+python -m venv venv
+
+:: 激活虚拟环境（每次打开新 cmd 窗口都需要执行这一步）
+venv\Scripts\activate
+```
+
+激活成功后，命令行最左侧会显示 `(venv)` 前缀，例如：
+
+```
+(venv) D:\video>
+```
+
+> **注意**：之后所有 `python` 和 `pip` 命令都必须在激活虚拟环境后执行。
+> 如果关闭了 cmd 窗口，下次重新打开后需要再次运行 `venv\Scripts\activate`。
+
+---
+
+### 3.6 安装 Python 依赖
+
+确认已激活虚拟环境（命令行左侧有 `(venv)` 标记），然后执行：
+
+```cmd
+cd D:\video
+venv\Scripts\activate
 ```
 
 **第一步：安装 CPU 版 PyTorch**（必须先安装，约 200 MB）：
@@ -144,7 +177,7 @@ python -c "import cv2, faster_whisper, easyocr, jieba, sklearn; print('所有依
 
 ---
 
-### 3.6 放入视频文件
+### 3.7 放入视频文件
 
 将课程视频文件（mp4/avi/mov 均可）手动复制到：
 
@@ -290,12 +323,15 @@ python step5_fusion.py --video D:\video\lesson\高数第一章.mp4
 
 ```cmd
 cd D:\video
+venv\Scripts\activate
 python run_all.py
 ```
 
 ### 只处理单个视频
 
 ```cmd
+cd D:\video
+venv\Scripts\activate
 python run_all.py --video D:\video\lesson\高数第一章.mp4
 ```
 
@@ -394,6 +430,14 @@ python train.py --eval ^
 ---
 
 ## 8 常见问题
+
+### Q0: 忘记激活虚拟环境，`import` 报错找不到模块
+**解决**：每次打开新的 cmd 窗口后，必须先执行：
+```cmd
+cd D:\video
+venv\Scripts\activate
+```
+命令行左侧出现 `(venv)` 后再运行 `python` 命令。
 
 ### Q1: 运行时提示 "ffmpeg 不是内部或外部命令"
 **解决**：检查 PATH 设置，参见安装步骤 3.2。确保**重新打开**了 cmd 窗口。
@@ -538,6 +582,9 @@ python train.py --eval ^
 
 ```cmd
 cd D:\video
+
+:: 每次打开新 cmd 窗口时，先激活虚拟环境
+venv\Scripts\activate
 
 :: 一键全流程（推荐）
 python run_all.py
