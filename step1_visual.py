@@ -3,8 +3,7 @@
 """
 步骤1: 视觉维度分析
   1. 检测教师是否在讲台区域（背景减除法）
-  2. PPT 区域文字内容识别（EasyOCR）
-  3. 幻灯片翻页检测（帧间 SSIM）
+  2. 若检测到全屏 PPT，默认教师在讲台区域内
 
 运行方式:
   python step1_visual.py --video D:/video/lesson/example.mp4
@@ -30,20 +29,14 @@ try:
     OUTPUT_DIR                 = _cfg.OUTPUT_DIR
     VISUAL_SAMPLE_FPS          = _cfg.VISUAL_SAMPLE_FPS
     PODIUM_REGION              = _cfg.PODIUM_REGION
-    PPT_REGION                 = _cfg.PPT_REGION
-    SLIDE_CHANGE_THRESHOLD     = _cfg.SLIDE_CHANGE_THRESHOLD
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
-    OCR_CONFIDENCE_THRESHOLD   = _cfg.OCR_CONFIDENCE_THRESHOLD
 except ImportError:
     OUTPUT_DIR                 = r"D:\video\output"
     VISUAL_SAMPLE_FPS          = 1
     PODIUM_REGION              = (0.10, 0.25, 0.90, 0.95)
-    PPT_REGION                 = (0.00, 0.00, 1.00, 0.80)
-    SLIDE_CHANGE_THRESHOLD     = 0.70
     TEACHER_PRESENCE_THRESHOLD = 0.05
     BG_INIT_FRAMES             = 30
-    OCR_CONFIDENCE_THRESHOLD   = 0.40
 
 
 # ============================================================
@@ -65,47 +58,20 @@ def region_crop(frame, region):
     return frame[int(y1*h):int(y2*h), int(x1*w):int(x2*w)]
 
 
-def compute_ssim_fast(img1, img2):
-    """轻量 SSIM（缩小到 160×90 后计算）"""
-    g1 = cv2.resize(cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY), (160, 90)).astype(float)
-    g2 = cv2.resize(cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY), (160, 90)).astype(float)
-    mu1, mu2   = g1.mean(), g2.mean()
-    s1,  s2    = g1.std(),  g2.std()
-    s12 = ((g1 - mu1) * (g2 - mu2)).mean()
-    C1, C2     = (0.01*255)**2, (0.03*255)**2
-    num  = (2*mu1*mu2 + C1) * (2*s12 + C2)
-    den  = (mu1**2 + mu2**2 + C1) * (s1**2 + s2**2 + C2)
-    return float(num / (den + 1e-8))
-
-
-def init_ocr():
-    """初始化 EasyOCR（首次运行自动下载 ~50 MB 模型）"""
-    try:
-        import easyocr
-        print("  初始化 OCR 引擎（首次运行会下载模型，约 50 MB）…")
-        # 'ch_sim' = Simplified Chinese, 'en' = English
-        reader = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
-        return reader
-    except ImportError:
-        print("  警告: EasyOCR 未安装，将跳过 OCR。请运行: pip install easyocr")
-        return None
-    except Exception as e:
-        print(f"  警告: OCR 初始化失败: {e}")
-        return None
-
-
-def run_ocr(reader, frame, region, min_conf):
-    """对帧的指定区域做 OCR，返回识别文本"""
-    if reader is None:
-        return ""
-    crop = region_crop(frame, region)
-    if crop.size == 0:
-        return ""
-    try:
-        results = reader.readtext(crop, detail=1, paragraph=True)
-        return " ".join(t for _, t, c in results if c >= min_conf).strip()
-    except Exception:
-        return ""
+def is_fullscreen_ppt(frame):
+    """
+    粗略判断当前帧是否为全屏 PPT。
+    规则：边缘密度较高 + 亮部占比较高 + 低饱和像素占比较高。
+    """
+    if frame is None or frame.size == 0:
+        return False
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    edges = cv2.Canny(gray, 80, 160)
+    edge_ratio = float(np.mean(edges > 0))
+    bright_ratio = float(np.mean(gray > 180))
+    low_sat_ratio = float(np.mean(hsv[:, :, 1] < 40))
+    return edge_ratio > 0.02 and bright_ratio > 0.35 and low_sat_ratio > 0.45
 
 
 # ============================================================
@@ -137,17 +103,10 @@ def analyze_video_visual(video_path, output_dir, video_name):
         detectShadows  = False,
     )
 
-    # OCR
-    ocr_reader = init_ocr()
-
     # 结果容器
     teacher_timeline  = []
-    slide_transitions = []
-    ppt_content       = []
-
-    prev_frame       = None
-    slide_idx        = 0
-    current_ppt_text = ""
+    slide_transitions = []  # 保留字段兼容下游
+    ppt_content       = []  # 保留字段兼容下游
     kernel           = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
     # 预热背景模型
@@ -174,42 +133,15 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN,   kernel)
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_DILATE, kernel)
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
-            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD)
+            full_ppt    = is_fullscreen_ppt(frame)
+            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD or full_ppt)
 
             teacher_timeline.append({
                 "time":        ts,
                 "in_podium":   in_podium,
                 "motion_ratio": round(fg_ratio, 4),
+                "full_screen_ppt": full_ppt,
             })
-
-            # —— 幻灯片切换检测 ——
-            if prev_frame is not None:
-                ssim = compute_ssim_fast(prev_frame, frame)
-                if ssim < SLIDE_CHANGE_THRESHOLD:
-                    slide_idx += 1
-                    slide_transitions.append({
-                        "time":      ts,
-                        "ssim":      round(ssim, 4),
-                        "slide_idx": slide_idx,
-                    })
-                    # 切换时 OCR
-                    new_text = run_ocr(ocr_reader, frame, PPT_REGION,
-                                       OCR_CONFIDENCE_THRESHOLD)
-                    if new_text:
-                        current_ppt_text = new_text
-                    ppt_content.append({
-                        "time":      ts,
-                        "slide_idx": slide_idx,
-                        "text":      current_ppt_text,
-                    })
-            else:
-                # 第一帧
-                current_ppt_text = run_ocr(ocr_reader, frame, PPT_REGION,
-                                           OCR_CONFIDENCE_THRESHOLD)
-                ppt_content.append({"time": 0.0, "slide_idx": 0,
-                                    "text": current_ppt_text})
-
-            prev_frame = frame.copy()
             pbar.update(1)
 
     cap.release()
@@ -239,7 +171,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
 
     print(f"\n  ✓ 视觉分析完成")
     print(f"    教师在讲台: {result['stats']['teacher_presence_ratio']*100:.1f}%")
-    print(f"    幻灯片切换: {result['stats']['total_slide_changes']} 次")
+    print("    说明: 检测到全屏PPT时默认教师在讲台区域内")
     print(f"    输出: {out_file}")
     return result
 
