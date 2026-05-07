@@ -86,7 +86,51 @@ def sanitize_filename(name):
 # 干扰检测
 # ============================================================
 
-def detect_interference(multimodal_index):
+def _merge_interference_ranges(interferences):
+    """按时间合并重叠干扰段，保留原因来源"""
+    if not interferences:
+        return []
+    interferences = sorted(interferences, key=lambda x: (x["start"], x["end"]))
+    merged = [dict(interferences[0])]
+    for cur in interferences[1:]:
+        prev = merged[-1]
+        if cur["start"] <= prev["end"]:
+            prev["end"] = max(prev["end"], cur["end"])
+            prev["duration"] = round(prev["end"] - prev["start"], 2)
+            prev["reasons"] = list(dict.fromkeys(prev.get("reasons", []) + cur.get("reasons", [])))
+            prev["source"] = "+".join(sorted(set(str(prev.get("source", "")).split("+") + str(cur.get("source", "")).split("+"))))
+            prev["teacher_absent_ratio"] = round(max(prev.get("teacher_absent_ratio", 0.0),
+                                                     cur.get("teacher_absent_ratio", 0.0)), 3)
+            prev["silence_ratio"] = round(max(prev.get("silence_ratio", 0.0),
+                                              cur.get("silence_ratio", 0.0)), 3)
+        else:
+            merged.append(dict(cur))
+    return merged
+
+
+def _build_model_interference_ranges(model_times):
+    """将模型预测干扰时刻列表转为连续区间"""
+    if not model_times:
+        return []
+    ts = sorted(set(round(float(t), 2) for t in model_times))
+    ranges = []
+    start = ts[0]
+    prev = ts[0]
+    for t in ts[1:]:
+        if t - prev <= 1.5:
+            prev = t
+            continue
+        dur = prev - start
+        if dur >= INTERFERENCE_MIN_DURATION:
+            ranges.append((start, prev))
+        start = prev = t
+    dur = prev - start
+    if dur >= INTERFERENCE_MIN_DURATION:
+        ranges.append((start, prev))
+    return ranges
+
+
+def detect_interference(multimodal_index, model_times=None):
     """
     干扰规则（满足任一即标记）：
       1. 某知识点段内教师缺席比例 > 阈值
@@ -144,7 +188,19 @@ def detect_interference(multimodal_index):
                     })
                 sil_start = None
 
-    return interferences
+    # 融合模型预测干扰
+    for seg_s, seg_e in _build_model_interference_ranges(model_times or []):
+        interferences.append({
+            "start": seg_s,
+            "end": seg_e,
+            "duration": round(seg_e - seg_s, 2),
+            "reasons": ["模型预测干扰"],
+            "teacher_absent_ratio": 0.0,
+            "silence_ratio": 0.0,
+            "source": "model",
+        })
+
+    return _merge_interference_ranges(interferences)
 
 
 # ============================================================
@@ -258,7 +314,15 @@ def fuse_and_cut(video_path, output_dir, video_name):
 
     # 干扰检测
     print("  检测干扰片段…")
-    interferences = detect_interference(idx)
+    model_times = []
+    try:
+        from train import predict_interference
+        model_times = predict_interference(idx)
+        if model_times:
+            print(f"  已应用训练干扰模型（命中时刻 {len(model_times)} 个）")
+    except Exception:
+        model_times = []
+    interferences = detect_interference(idx, model_times=model_times)
     print(f"  共 {len(interferences)} 个干扰片段")
     for intf in interferences:
         print(f"    [{intf['start']:.0f}s–{intf['end']:.0f}s]  {', '.join(intf['reasons'])}")
