@@ -103,7 +103,7 @@ def _merge_source_labels(prev_source, cur_source):
 # ============================================================
 
 def _merge_interference_ranges(interferences):
-    """按时间合并重叠干扰段，保留原因来源"""
+    """Merge overlapping interference ranges while preserving reason/source labels."""
     if not interferences:
         return []
     interferences = sorted(interferences, key=lambda x: (x["start"], x["end"]))
@@ -125,7 +125,7 @@ def _merge_interference_ranges(interferences):
 
 
 def _build_model_interference_ranges(model_times):
-    """将模型预测干扰时刻列表转为连续区间"""
+    """Convert model-predicted interference timestamps into contiguous ranges."""
     if not model_times:
         return []
     ts = sorted(set(round(float(t), 2) for t in model_times))

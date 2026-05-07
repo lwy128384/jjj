@@ -166,7 +166,7 @@ def cosine_distance(u, v):
 
 
 def normalize_boundaries(bounds, t_start, t_end):
-    """过滤过短间隔并拆分过长间隔"""
+    """Filter too-short intervals and split overly long intervals."""
     filtered = [round(t_start, 2)]
     for t in sorted(bounds):
         if abs(t - filtered[-1]) < TIME_EPSILON:
@@ -187,8 +187,8 @@ def normalize_boundaries(bounds, t_start, t_end):
 
 def try_refine_boundaries_with_model(filtered, valid, visual_features):
     """
-    若存在训练好的边界模型，则在语义边界基础上融合模型边界。
-    模型不可用时保持原行为。
+    Refine semantic boundaries with the trained boundary model when available.
+    Falls back to rule-based boundaries when model inference is unavailable.
     """
     try:
         from train import predict_boundaries
