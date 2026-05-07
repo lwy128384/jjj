@@ -180,7 +180,7 @@ def normalize_boundaries(bounds, t_start, t_end):
     """
     filtered = [round(t_start, 2)]
     for t in sorted(bounds):
-        if abs(t - filtered[-1]) < TIME_EPSILON:
+        if abs(t - filtered[-1]) <= TIME_EPSILON:
             continue
         dt = t - filtered[-1]
         if dt < MIN_KNOWLEDGE_DURATION:
