@@ -181,6 +181,7 @@ def normalize_boundaries(bounds, t_start, t_end):
     """
     filtered = [round(t_start, 2)]
     for t in sorted(bounds):
+        # Treat near-equal timestamps as duplicates under numeric tolerance.
         if abs(t - filtered[-1]) <= TIME_EPSILON:
             continue
         dt = t - filtered[-1]
@@ -192,6 +193,7 @@ def normalize_boundaries(bounds, t_start, t_end):
             for _ in range(1, n + 1):
                 filtered.append(round(filtered[-1] + step, 2))
         filtered.append(round(t, 2))
+    # Ensure end boundary exists unless it is already present within tolerance.
     if abs(filtered[-1] - round(t_end, 2)) >= TIME_EPSILON:
         filtered.append(round(t_end, 2))
     return filtered
@@ -226,7 +228,7 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
 
     pseudo_text = {
         "knowledge_segments": [
-            {"id": i, "start": s, "end": e, "title": f"{KNOWLEDGE_TITLE_PREFIX}{i+1}"}
+            {"id": i, "start": s, "end": e, "title": f"{KNOWLEDGE_TITLE_PREFIX} {i+1}"}
             for i, (s, e) in enumerate(zip(filtered[:-1], filtered[1:]))
         ],
         "boundaries": filtered,

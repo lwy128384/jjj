@@ -47,7 +47,9 @@ except ImportError:
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
 
+# Maximum allowed gap (seconds) for merging adjacent model-predicted timestamps.
 MODEL_INTERFERENCE_MAX_GAP = 1.5
+# Small tolerance for floating-point time comparisons (seconds).
 TIME_EPSILON = 1e-6
 MODEL_PREDICT_EXCEPTIONS = (
     FileNotFoundError,
@@ -110,6 +112,7 @@ def _merge_interference_ranges(interferences):
     merged = [dict(interferences[0])]
     for cur in interferences[1:]:
         prev = merged[-1]
+        # Merge touching/overlapping ranges to avoid fragmented interference clips.
         if cur["start"] <= prev["end"] + TIME_EPSILON:
             prev["end"] = max(prev["end"], cur["end"])
             prev["duration"] = round(prev["end"] - prev["start"], 2)
