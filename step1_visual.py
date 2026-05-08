@@ -124,29 +124,50 @@ def run_ocr(reader, frame, region, min_conf):
     if crop.size == 0:
         return ""
     try:
+        relaxed_conf = max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR)
         results = reader.readtext(crop, detail=1, paragraph=False)
-        texts = [t.strip() for _, t, c in results if c >= min_conf and str(t).strip()]
+        texts = []
+        relaxed_texts = []
+        for _, t, c in results:
+            clean_text = str(t).strip()
+            if not clean_text:
+                continue
+            if c >= min_conf:
+                texts.append(clean_text)
+            if c >= relaxed_conf:
+                relaxed_texts.append(clean_text)
         if texts:
             return " ".join(texts).strip()
 
         # Fallback for dense slides: relax confidence threshold and retry with enhancement.
-        relaxed_conf = max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR)
-        texts = [t.strip() for _, t, c in results if c >= relaxed_conf and str(t).strip()]
-        if texts:
-            return " ".join(texts).strip()
+        if relaxed_texts:
+            return " ".join(relaxed_texts).strip()
 
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        if min(gray.shape[:2]) < OCR_UPSCALE_MIN_DIM:
-            gray = cv2.resize(
-                gray, None, fx=OCR_UPSCALE_FACTOR, fy=OCR_UPSCALE_FACTOR, interpolation=cv2.INTER_CUBIC
+        gray_base = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        gray_work = gray_base
+        if min(gray_base.shape[:2]) < OCR_UPSCALE_MIN_DIM:
+            gray_work = cv2.resize(
+                gray_base, None, fx=OCR_UPSCALE_FACTOR, fy=OCR_UPSCALE_FACTOR, interpolation=cv2.INTER_CUBIC
             )
-        gray = cv2.GaussianBlur(gray, (OCR_GAUSSIAN_KERNEL, OCR_GAUSSIAN_KERNEL), 0)
+
+        gaussian_kernel = int(OCR_GAUSSIAN_KERNEL)
+        if gaussian_kernel < 1:
+            gaussian_kernel = 1
+        if gaussian_kernel % 2 == 0:
+            gaussian_kernel += 1
+        gray_work = cv2.GaussianBlur(gray_work, (gaussian_kernel, gaussian_kernel), 0)
+
+        adaptive_block_size = int(OCR_ADAPTIVE_BLOCK_SIZE)
+        if adaptive_block_size <= 1:
+            adaptive_block_size = 3
+        if adaptive_block_size % 2 == 0:
+            adaptive_block_size += 1
         enhanced = cv2.adaptiveThreshold(
-            gray,
+            gray_work,
             255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY,
-            OCR_ADAPTIVE_BLOCK_SIZE,
+            adaptive_block_size,
             OCR_ADAPTIVE_C,
         )
         fallback_results = reader.readtext(enhanced, detail=1, paragraph=False)
