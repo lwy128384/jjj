@@ -155,17 +155,21 @@ def run_ocr(reader, frame, region, min_conf):
             OCR_ADAPTIVE_C,
         )
         ocr_inputs = [crop, gray, threshold_image]
-        confs = [
-            min_conf,
-            max(OCR_FALLBACK_MIN_CONFIDENCE, min_conf * OCR_FALLBACK_CONF_MULTIPLIER),
-        ]
+        for img in ocr_inputs:
+            results = reader.readtext(img, detail=1, paragraph=True)
+            text = _extract_text_from_ocr_results(results, min_conf)
+            if text:
+                return text
 
-        for conf in confs:
-            for img in ocr_inputs:
-                results = reader.readtext(img, detail=1, paragraph=True)
-                text = _extract_text_from_ocr_results(results, conf)
-                if text:
-                    return text
+        fallback_conf = max(
+            OCR_FALLBACK_MIN_CONFIDENCE,
+            min_conf * OCR_FALLBACK_CONF_MULTIPLIER,
+        )
+        for img in (threshold_image, gray):
+            results = reader.readtext(img, detail=1, paragraph=True)
+            text = _extract_text_from_ocr_results(results, fallback_conf)
+            if text:
+                return text
         return ""
     except Exception:
         return ""
@@ -281,6 +285,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
             if fullscreen_ppt:
                 ppt_region = PPT_REGION_FULLSCREEN
                 curr_crop = region_crop(frame, ppt_region)
+                ocr_attempted_in_frame = False
                 if not in_fullscreen_segment:
                     in_fullscreen_segment = True
                     segment_last_time = ts
@@ -288,6 +293,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
                     current_ppt_text = run_ocr(
                         ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
                     )
+                    ocr_attempted_in_frame = True
                     if current_ppt_text:
                         segment_last_text = current_ppt_text
 
@@ -299,18 +305,12 @@ def analyze_video_visual(video_path, output_dir, video_name):
                         new_text = run_ocr(
                             ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
                         )
+                        ocr_attempted_in_frame = True
                         if new_text:
                             segment_last_text = new_text
                             segment_last_time = ts
                         elif segment_last_text:
                             segment_last_time = ts
-                if not segment_last_text:
-                    retry_text = run_ocr(
-                        ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
-                    )
-                    if retry_text:
-                        segment_last_text = retry_text
-                        segment_last_time = ts
                 else:
                     if not warned_empty_fullscreen_crop:
                         print("  警告: 全屏 PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT_REGION_FULLSCREEN 参数。")
@@ -322,11 +322,19 @@ def analyze_video_visual(video_path, output_dir, video_name):
                             new_text = run_ocr(
                                 ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
                             )
+                            ocr_attempted_in_frame = True
                             if new_text:
                                 segment_last_text = new_text
                                 segment_last_time = ts
                             elif segment_last_text:
                                 segment_last_time = ts
+                if not segment_last_text and not ocr_attempted_in_frame:
+                    retry_text = run_ocr(
+                        ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
+                    )
+                    if retry_text:
+                        segment_last_text = retry_text
+                        segment_last_time = ts
             else:
                 if in_fullscreen_segment and segment_last_time is not None:
                     slide_idx += 1
