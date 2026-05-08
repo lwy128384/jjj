@@ -124,7 +124,11 @@ def run_ocr(reader, frame, region, min_conf):
     if crop.size == 0:
         return ""
     try:
-        relaxed_conf = max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR)
+        relaxed_conf = min(
+            min_conf,
+            max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR),
+        )
+        # Keep paragraph=False to avoid over-merging dense multi-line text on full-slide OCR.
         results = reader.readtext(crop, detail=1, paragraph=False)
         texts = []
         relaxed_texts = []
@@ -151,8 +155,8 @@ def run_ocr(reader, frame, region, min_conf):
             )
 
         gaussian_kernel = int(OCR_GAUSSIAN_KERNEL)
-        if gaussian_kernel < 1:
-            gaussian_kernel = 1
+        if gaussian_kernel < 3:
+            gaussian_kernel = 3
         if gaussian_kernel % 2 == 0:
             gaussian_kernel += 1
         gray_work = cv2.GaussianBlur(gray_work, (gaussian_kernel, gaussian_kernel), 0)
@@ -171,7 +175,11 @@ def run_ocr(reader, frame, region, min_conf):
             OCR_ADAPTIVE_C,
         )
         fallback_results = reader.readtext(enhanced, detail=1, paragraph=False)
-        fallback_texts = [t.strip() for _, t, c in fallback_results if c >= relaxed_conf and str(t).strip()]
+        fallback_texts = []
+        for _, t, c in fallback_results:
+            clean_text = str(t).strip()
+            if c >= relaxed_conf and clean_text:
+                fallback_texts.append(clean_text)
         return " ".join(fallback_texts).strip()
     except Exception:
         return ""
