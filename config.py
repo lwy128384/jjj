@@ -28,6 +28,13 @@ PODIUM_REGION = (0.38, 0.42, 0.66, 0.94)
 # PPT 区域参数（相对坐标，左/上/右/下）
 # 建议覆盖投影屏幕主体，尽量避开下方听众区域
 PPT_REGION = (0.02, 0.02, 0.98, 0.80)
+# 全屏 PPT 识别与 OCR/翻页检测区域
+PPT_REGION_FULLSCREEN = (0.00, 0.00, 1.00, 0.90)
+
+# 全屏 PPT 判定阈值
+FULLSCREEN_BRIGHT_RATIO = 0.35
+FULLSCREEN_LOW_SAT_RATIO = 0.45
+FULLSCREEN_EDGE_RATIO = 0.02
 
 # 幻灯片切换 SSIM 阈值（越小越灵敏，0~1）
 SLIDE_CHANGE_THRESHOLD = 0.70

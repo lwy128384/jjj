@@ -31,6 +31,10 @@ try:
     VISUAL_SAMPLE_FPS          = _cfg.VISUAL_SAMPLE_FPS
     PODIUM_REGION              = _cfg.PODIUM_REGION
     PPT_REGION                 = _cfg.PPT_REGION
+    PPT_REGION_FULLSCREEN      = getattr(_cfg, "PPT_REGION_FULLSCREEN", (0.00, 0.00, 1.00, 0.90))
+    FULLSCREEN_BRIGHT_RATIO    = getattr(_cfg, "FULLSCREEN_BRIGHT_RATIO", 0.35)
+    FULLSCREEN_LOW_SAT_RATIO   = getattr(_cfg, "FULLSCREEN_LOW_SAT_RATIO", 0.45)
+    FULLSCREEN_EDGE_RATIO      = getattr(_cfg, "FULLSCREEN_EDGE_RATIO", 0.02)
     SLIDE_CHANGE_THRESHOLD     = _cfg.SLIDE_CHANGE_THRESHOLD
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
@@ -40,6 +44,10 @@ except ImportError:
     VISUAL_SAMPLE_FPS          = 1
     PODIUM_REGION              = (0.38, 0.42, 0.66, 0.94)
     PPT_REGION                 = (0.02, 0.02, 0.98, 0.80)
+    PPT_REGION_FULLSCREEN      = (0.00, 0.00, 1.00, 0.90)
+    FULLSCREEN_BRIGHT_RATIO    = 0.35
+    FULLSCREEN_LOW_SAT_RATIO   = 0.45
+    FULLSCREEN_EDGE_RATIO      = 0.02
     SLIDE_CHANGE_THRESHOLD     = 0.70
     TEACHER_PRESENCE_THRESHOLD = 0.05
     BG_INIT_FRAMES             = 30
@@ -108,6 +116,31 @@ def run_ocr(reader, frame, region, min_conf):
         return ""
 
 
+def is_fullscreen_ppt(frame):
+    """
+    粗略判断全屏 PPT 画面：
+    - 亮部占比高
+    - 低饱和像素占比高（大面积白底/浅色底）
+    - 边缘密度达到一定水平（存在文字线条）
+    """
+    if frame is None or frame.size == 0:
+        return False
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    edges = cv2.Canny(gray, 80, 160)
+
+    bright_ratio = float(np.mean(gray > 180))
+    low_sat_ratio = float(np.mean(hsv[:, :, 1] < 40))
+    edge_ratio = float(np.mean(edges > 0))
+
+    return bool(
+        bright_ratio > FULLSCREEN_BRIGHT_RATIO and
+        low_sat_ratio > FULLSCREEN_LOW_SAT_RATIO and
+        edge_ratio > FULLSCREEN_EDGE_RATIO
+    )
+
+
 # ============================================================
 # 核心分析
 # ============================================================
@@ -150,6 +183,10 @@ def analyze_video_visual(video_path, output_dir, video_name):
     slide_idx        = 0
     current_ppt_text = ""
     kernel           = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    in_fullscreen_segment      = False
+    segment_last_text          = ""
+    segment_last_time          = None
+    segment_last_ssim          = None
 
     # 预热背景模型
     print(f"  预热背景模型（{BG_INIT_FRAMES} 帧）…")
@@ -175,54 +212,91 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN,   kernel)
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_DILATE, kernel)
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
-            ppt_region  = PPT_REGION
-            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD)
+            full_ppt    = is_fullscreen_ppt(frame)
+            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD or full_ppt)
 
             teacher_timeline.append({
                 "time":        ts,
                 "in_podium":   in_podium,
                 "motion_ratio": round(fg_ratio, 4),
+                "full_screen_ppt": full_ppt,
             })
 
-            # —— 幻灯片切换检测 ——
-            if prev_frame is not None:
-                prev_crop = region_crop(prev_frame, PPT_REGION)
+            # —— 仅在全屏 PPT 时进行翻页/OCR 检测 ——
+            if full_ppt:
+                ppt_region = PPT_REGION_FULLSCREEN
                 curr_crop = region_crop(frame, ppt_region)
-                if prev_crop.size > 0 and curr_crop.size > 0:
+                if not in_fullscreen_segment:
+                    in_fullscreen_segment = True
+                    segment_last_time = ts
+                    segment_last_ssim = None
+                    current_ppt_text = run_ocr(
+                        ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
+                    )
+                    if current_ppt_text:
+                        segment_last_text = current_ppt_text
+
+                prev_crop = region_crop(prev_frame, ppt_region) if prev_frame is not None else None
+                if prev_crop is not None and prev_crop.size > 0 and curr_crop.size > 0:
                     ssim = compute_ssim_fast(prev_crop, curr_crop)
+                    if ssim < SLIDE_CHANGE_THRESHOLD:
+                        segment_last_ssim = round(ssim, 4)
+                        new_text = run_ocr(
+                            ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
+                        )
+                        if new_text:
+                            segment_last_text = new_text
+                        segment_last_time = ts
                 else:
                     if not warned_bad_crop:
-                        print("  警告: PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT 区域参数。")
+                        print("  警告: 全屏 PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT_REGION_FULLSCREEN 参数。")
                         warned_bad_crop = True
-                    ssim = compute_ssim_fast(prev_frame, frame)
-                if ssim < SLIDE_CHANGE_THRESHOLD:
+                    if prev_frame is not None:
+                        ssim = compute_ssim_fast(prev_frame, frame)
+                        if ssim < SLIDE_CHANGE_THRESHOLD:
+                            segment_last_ssim = round(ssim, 4)
+                            new_text = run_ocr(
+                                ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
+                            )
+                            if new_text:
+                                segment_last_text = new_text
+                            segment_last_time = ts
+            else:
+                if in_fullscreen_segment and segment_last_time is not None:
                     slide_idx += 1
                     slide_transitions.append({
-                        "time":      ts,
-                        "ssim":      round(ssim, 4),
+                        "time":      segment_last_time,
+                        "ssim":      segment_last_ssim if segment_last_ssim is not None else 0.0,
                         "slide_idx": slide_idx,
                     })
-                    # 切换时 OCR
-                    new_text = run_ocr(ocr_reader, frame, ppt_region,
-                                       OCR_CONFIDENCE_THRESHOLD)
-                    if new_text:
-                        current_ppt_text = new_text
                     ppt_content.append({
-                        "time":      ts,
+                        "time":      segment_last_time,
                         "slide_idx": slide_idx,
-                        "text":      current_ppt_text,
+                        "text":      segment_last_text,
                     })
-            else:
-                # 第一帧
-                current_ppt_text = run_ocr(ocr_reader, frame, ppt_region,
-                                           OCR_CONFIDENCE_THRESHOLD)
-                ppt_content.append({"time": 0.0, "slide_idx": 0,
-                                    "text": current_ppt_text})
+                in_fullscreen_segment = False
+                segment_last_text = ""
+                segment_last_time = None
+                segment_last_ssim = None
 
             prev_frame = frame.copy()
             pbar.update(1)
 
     cap.release()
+
+    # 视频在全屏 PPT 段结束时收尾
+    if in_fullscreen_segment and segment_last_time is not None:
+        slide_idx += 1
+        slide_transitions.append({
+            "time":      segment_last_time,
+            "ssim":      segment_last_ssim if segment_last_ssim is not None else 0.0,
+            "slide_idx": slide_idx,
+        })
+        ppt_content.append({
+            "time":      segment_last_time,
+            "slide_idx": slide_idx,
+            "text":      segment_last_text,
+        })
 
     present_cnt = sum(1 for t in teacher_timeline if t["in_podium"])
     result = {
