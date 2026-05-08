@@ -124,6 +124,18 @@ def run_ocr(reader, frame, region, min_conf):
     if crop.size == 0:
         return ""
     try:
+        def _safe_odd_int(value, default, min_value=3):
+            try:
+                n = int(value)
+            except (TypeError, ValueError):
+                n = int(default)
+            if n < min_value:
+                n = min_value
+            if n % 2 == 0:
+                n += 1
+            return n
+
+        # relaxed_conf <= min_conf, and still keeps a minimum fallback floor for dense-slide OCR.
         relaxed_conf = min(
             min_conf,
             max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR),
@@ -154,18 +166,10 @@ def run_ocr(reader, frame, region, min_conf):
                 gray_base, None, fx=OCR_UPSCALE_FACTOR, fy=OCR_UPSCALE_FACTOR, interpolation=cv2.INTER_CUBIC
             )
 
-        gaussian_kernel = int(OCR_GAUSSIAN_KERNEL)
-        if gaussian_kernel < 3:
-            gaussian_kernel = 3
-        if gaussian_kernel % 2 == 0:
-            gaussian_kernel += 1
+        gaussian_kernel = _safe_odd_int(OCR_GAUSSIAN_KERNEL, default=3, min_value=3)
         gray_work = cv2.GaussianBlur(gray_work, (gaussian_kernel, gaussian_kernel), 0)
 
-        adaptive_block_size = int(OCR_ADAPTIVE_BLOCK_SIZE)
-        if adaptive_block_size <= 1:
-            adaptive_block_size = 3
-        if adaptive_block_size % 2 == 0:
-            adaptive_block_size += 1
+        adaptive_block_size = _safe_odd_int(OCR_ADAPTIVE_BLOCK_SIZE, default=31, min_value=3)
         enhanced = cv2.adaptiveThreshold(
             gray_work,
             255,
