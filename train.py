@@ -39,6 +39,7 @@ from pathlib import Path
 # ============================================================
 try:
     import config as _cfg
+    LESSON_DIR       = _cfg.LESSON_DIR
     OUTPUT_DIR       = _cfg.OUTPUT_DIR
     MODELS_DIR       = _cfg.MODELS_DIR
     TRAIN_MODEL_FILE = _cfg.TRAIN_MODEL_FILE
@@ -46,6 +47,7 @@ try:
     RANDOM_STATE     = _cfg.RANDOM_STATE
     TIME_RESOLUTION  = _cfg.TIME_RESOLUTION
 except ImportError:
+    LESSON_DIR       = r"D:\video\lesson"
     OUTPUT_DIR       = r"D:\video\output"
     MODELS_DIR       = r"D:\video\models"
     TRAIN_MODEL_FILE = "boundary_model.pkl"

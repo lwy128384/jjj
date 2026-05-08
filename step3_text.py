@@ -45,6 +45,17 @@ except ImportError:
     MIN_TEXT_LENGTH        = 5
     NO_SPEECH_PROB_THRESHOLD = 0.50
 
+KNOWLEDGE_TITLE_PREFIX = "知识点"
+MODEL_PREDICT_EXCEPTIONS = (
+    FileNotFoundError,
+    OSError,
+    ValueError,
+    TypeError,
+    KeyError,
+    RuntimeError,
+)
+TIME_EPSILON = 1e-6
+
 
 # ============================================================
 # 工具函数
@@ -155,6 +166,102 @@ def cosine_distance(u, v):
     return float(1.0 - np.dot(u, v))
 
 
+def normalize_boundaries(bounds, t_start, t_end):
+    """
+    Normalize boundary timestamps.
+
+    Args:
+        bounds: Candidate boundary timestamps (seconds).
+        t_start: Start timestamp (seconds) for the analyzed range.
+        t_end: End timestamp (seconds) for the analyzed range.
+
+    Returns:
+        A sorted boundary timestamp list after short-interval filtering and
+        long-interval splitting.
+    """
+    filtered = [round(t_start, 2)]
+    for t in sorted(bounds):
+        # Treat near-equal timestamps as duplicates under numeric tolerance.
+        if abs(t - filtered[-1]) <= TIME_EPSILON:
+            continue
+        dt = t - filtered[-1]
+        if dt < MIN_KNOWLEDGE_DURATION:
+            continue
+        if dt > MAX_KNOWLEDGE_DURATION:
+            n = int(dt / MAX_KNOWLEDGE_DURATION)
+            step = dt / (n + 1)
+            for _ in range(1, n + 1):
+                filtered.append(round(filtered[-1] + step, 2))
+        filtered.append(round(t, 2))
+    # Ensure end boundary exists unless it is already present within tolerance.
+    if abs(filtered[-1] - round(t_end, 2)) >= TIME_EPSILON:
+        filtered.append(round(t_end, 2))
+    return filtered
+
+
+def try_refine_boundaries_with_model(filtered, valid, visual_features):
+    """
+    Refine semantic boundaries with the trained boundary model when available.
+    Falls back to rule-based boundaries when model inference is unavailable.
+
+    Args:
+        filtered: Rule-based normalized boundaries.
+        valid: Valid ASR segments used for boundary detection.
+        visual_features: Optional visual feature dictionary.
+
+    Returns:
+        Refined boundary list when model predictions are usable; otherwise the
+        original rule-based boundary list.
+    """
+    try:
+        from train import predict_boundaries
+        from step4_align import build_timeline
+    except ImportError:
+        return filtered
+
+    if not valid:
+        return filtered
+
+    duration = max(s["end"] for s in valid)
+    if visual_features:
+        duration = max(duration, float(visual_features.get("duration", 0.0)))
+
+    pseudo_text = {
+        "knowledge_segments": [
+            {"id": i, "start": s, "end": e, "title": f"{KNOWLEDGE_TITLE_PREFIX} {i+1}"}
+            for i, (s, e) in enumerate(zip(filtered[:-1], filtered[1:]))
+        ],
+        "boundaries": filtered,
+    }
+    pseudo_audio = {"segments": valid}
+
+    timeline = build_timeline(visual_features, pseudo_audio, pseudo_text, duration)
+    try:
+        model_times = predict_boundaries({"time_series": timeline})
+    except MODEL_PREDICT_EXCEPTIONS as e:
+        print(f"  训练边界模型调用失败，回退规则边界: {e}")
+        return filtered
+    if not model_times:
+        return filtered
+
+    t_start = valid[0]["start"]
+    t_end = valid[-1]["end"]
+    model_bounds = [
+        round(t, 2)
+        for t in model_times
+        if t_start + TIME_EPSILON < t < t_end - TIME_EPSILON
+    ]
+    if not model_bounds:
+        return filtered
+
+    merged_bounds = sorted(set(filtered + model_bounds + [t_start, t_end]))
+    refined = normalize_boundaries(merged_bounds, t_start, t_end)
+    if len(refined) >= 2:
+        print(f"  已应用训练边界模型（新增候选边界 {len(model_bounds)} 个）")
+        return refined
+    return filtered
+
+
 # ============================================================
 # 边界检测
 # ============================================================
@@ -224,20 +331,8 @@ def detect_boundaries(segments, jieba, visual_features=None):
     t_end   = valid[-1]["end"]
     bounds  = [t_start] + [m["time"] for m in merged] + [t_end]
 
-    # 过滤过短的间隔，拆分过长的间隔
-    filtered = [t_start]
-    for t in bounds[1:]:
-        dt = t - filtered[-1]
-        if dt < MIN_KNOWLEDGE_DURATION:
-            continue          # 太短，跳过此边界
-        if dt > MAX_KNOWLEDGE_DURATION:
-            n = int(dt / MAX_KNOWLEDGE_DURATION)
-            step = dt / (n + 1)
-            for k in range(1, n + 1):
-                filtered.append(round(filtered[-1] + step, 2))
-        filtered.append(round(t, 2))
-    if filtered[-1] < t_end - 1:
-        filtered.append(t_end)
+    filtered = normalize_boundaries(bounds, t_start, t_end)
+    filtered = try_refine_boundaries_with_model(filtered, valid, visual_features)
 
     # 生成知识点段
     knowledge_segs = []
