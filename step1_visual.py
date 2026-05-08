@@ -31,12 +31,6 @@ try:
     VISUAL_SAMPLE_FPS          = _cfg.VISUAL_SAMPLE_FPS
     PODIUM_REGION              = _cfg.PODIUM_REGION
     PPT_REGION                 = _cfg.PPT_REGION
-    PPT_AUTO_REGION            = getattr(_cfg, "PPT_AUTO_REGION", True)
-    PPT_REGION_FULLSCREEN      = getattr(_cfg, "PPT_REGION_FULLSCREEN", (0.00, 0.00, 1.00, 0.90))
-    PPT_REGION_SPLIT           = getattr(_cfg, "PPT_REGION_SPLIT", PPT_REGION)
-    FULLSCREEN_BRIGHT_RATIO    = getattr(_cfg, "FULLSCREEN_BRIGHT_RATIO", 0.35)
-    FULLSCREEN_LOW_SAT_RATIO   = getattr(_cfg, "FULLSCREEN_LOW_SAT_RATIO", 0.45)
-    FULLSCREEN_EDGE_RATIO      = getattr(_cfg, "FULLSCREEN_EDGE_RATIO", 0.02)
     SLIDE_CHANGE_THRESHOLD     = _cfg.SLIDE_CHANGE_THRESHOLD
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
@@ -46,12 +40,6 @@ except ImportError:
     VISUAL_SAMPLE_FPS          = 1
     PODIUM_REGION              = (0.38, 0.42, 0.66, 0.94)
     PPT_REGION                 = (0.02, 0.02, 0.98, 0.80)
-    PPT_AUTO_REGION            = True
-    PPT_REGION_FULLSCREEN      = (0.00, 0.00, 1.00, 0.90)
-    PPT_REGION_SPLIT           = PPT_REGION
-    FULLSCREEN_BRIGHT_RATIO    = 0.35
-    FULLSCREEN_LOW_SAT_RATIO   = 0.45
-    FULLSCREEN_EDGE_RATIO      = 0.02
     SLIDE_CHANGE_THRESHOLD     = 0.70
     TEACHER_PRESENCE_THRESHOLD = 0.05
     BG_INIT_FRAMES             = 30
@@ -120,38 +108,6 @@ def run_ocr(reader, frame, region, min_conf):
         return ""
 
 
-def is_fullscreen_ppt(frame):
-    """
-    粗略判断全屏 PPT 画面：
-    - 亮部占比高
-    - 低饱和像素占比高（大面积白底/浅色底）
-    - 边缘密度达到一定水平（存在文字线条）
-    """
-    if frame is None or frame.size == 0:
-        return False
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    edges = cv2.Canny(gray, 80, 160)
-
-    bright_ratio = float(np.mean(gray > 180))
-    low_sat_ratio = float(np.mean(hsv[:, :, 1] < 40))
-    edge_ratio = float(np.mean(edges > 0))
-
-    return bool(
-        bright_ratio > FULLSCREEN_BRIGHT_RATIO and
-        low_sat_ratio > FULLSCREEN_LOW_SAT_RATIO and
-        edge_ratio > FULLSCREEN_EDGE_RATIO
-    )
-
-
-def get_active_ppt_region(full_ppt):
-    """根据是否全屏 PPT 选择 OCR/SSIM 使用的区域。"""
-    if not PPT_AUTO_REGION:
-        return PPT_REGION
-    return PPT_REGION_FULLSCREEN if full_ppt else PPT_REGION_SPLIT
-
-
 # ============================================================
 # 核心分析
 # ============================================================
@@ -190,7 +146,6 @@ def analyze_video_visual(video_path, output_dir, video_name):
     ppt_content       = []
 
     prev_frame       = None
-    prev_ppt_region  = PPT_REGION
     warned_bad_crop  = False
     slide_idx        = 0
     current_ppt_text = ""
@@ -220,33 +175,24 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN,   kernel)
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_DILATE, kernel)
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
-            full_ppt    = is_fullscreen_ppt(frame)
-            ppt_region  = get_active_ppt_region(full_ppt)
-            # 全屏课件时，背景减除对教师检测容易失真，默认按“在讲台”处理，
-            # 后续可在步骤5结合静默与多模态规则进一步过滤疑似干扰片段。
-            in_podium   = bool(
-                fg_ratio > TEACHER_PRESENCE_THRESHOLD or full_ppt
-            )
+            ppt_region  = PPT_REGION
+            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD)
 
             teacher_timeline.append({
                 "time":        ts,
                 "in_podium":   in_podium,
                 "motion_ratio": round(fg_ratio, 4),
-                "full_screen_ppt": full_ppt,
             })
 
             # —— 幻灯片切换检测 ——
             if prev_frame is not None:
-                prev_crop = region_crop(prev_frame, prev_ppt_region)
+                prev_crop = region_crop(prev_frame, PPT_REGION)
                 curr_crop = region_crop(frame, ppt_region)
                 if prev_crop.size > 0 and curr_crop.size > 0:
                     ssim = compute_ssim_fast(prev_crop, curr_crop)
                 else:
                     if not warned_bad_crop:
-                        print(
-                            "  警告: PPT 区域裁剪为空，回退到整帧 SSIM；"
-                            f"prev_region={prev_ppt_region}, curr_region={ppt_region}"
-                        )
+                        print("  警告: PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT 区域参数。")
                         warned_bad_crop = True
                     ssim = compute_ssim_fast(prev_frame, frame)
                 if ssim < SLIDE_CHANGE_THRESHOLD:
@@ -274,7 +220,6 @@ def analyze_video_visual(video_path, output_dir, video_name):
                                     "text": current_ppt_text})
 
             prev_frame = frame.copy()
-            prev_ppt_region = ppt_region
             pbar.update(1)
 
     cap.release()

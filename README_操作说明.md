@@ -235,7 +235,6 @@ python step1_visual.py --video D:\video\lesson\高数第一章.mp4
 **功能**：
 - 每秒采样一帧
 - 背景减除检测教师是否在讲台区域
-- 若出现全屏PPT画面，默认教师在讲台区域内（用于减少课件全屏时的误检，必要时可在步骤5结合静默规则再过滤）
 - 帧间 SSIM 检测幻灯片翻页
 - EasyOCR 识别每张新幻灯片文字内容
 
@@ -493,14 +492,8 @@ venv\Scripts\activate
 |------|--------|------|----------|
 | `VISUAL_SAMPLE_FPS` | 1 | 每秒采样帧数 | 降低可加快速度 |
 | `PODIUM_REGION` | (0.38,0.42,0.66,0.94) | 讲台区域比例 | 先框住讲台与教师活动区，尽量排除前排学生 |
-| `PPT_AUTO_REGION` | True | 是否按场景自动切换 PPT 区域 | 建议保持 True |
-| `PPT_REGION_FULLSCREEN` | (0,0,1,0.9) | 全屏投影时 PPT 区域 | 全屏课件可适当扩大到 (0,0,1,1) |
-| `PPT_REGION_SPLIT` | (0.02,0.02,0.98,0.8) | 分屏/教室场景 PPT 区域 | 建议覆盖上方屏幕，避免下方听众 |
-| `PPT_REGION` | 同 `PPT_REGION_SPLIT` | 兼容旧参数回退区域 | 关闭自动模式时生效 |
+| `PPT_REGION` | (0.02,0.02,0.98,0.8) | PPT 区域比例 | 建议覆盖上方屏幕，避免下方听众 |
 | `SLIDE_CHANGE_THRESHOLD` | 0.70 | SSIM 翻页阈值 | 越小越灵敏 |
-| `FULLSCREEN_BRIGHT_RATIO` | 0.35 | 全屏 PPT 亮部阈值 | 光线偏暗时可下调 |
-| `FULLSCREEN_LOW_SAT_RATIO` | 0.45 | 全屏 PPT 低饱和阈值 | 画面偏彩色时可下调 |
-| `FULLSCREEN_EDGE_RATIO` | 0.02 | 全屏 PPT 边缘密度阈值 | 文字较少时可下调 |
 | `TEACHER_PRESENCE_THRESHOLD` | 0.05 | 教师检测阈值 | 减小可提高检测率 |
 | `WHISPER_MODEL_SIZE` | "base" | Whisper 模型 | tiny/base/small/medium |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
@@ -520,7 +513,7 @@ venv\Scripts\activate
   "fps": 25.0,
   "duration": 3600.0,
   "teacher_timeline": [
-    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12, "full_screen_ppt": false}
+    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12}
   ],
   "slide_transitions": [
     {"time": 45.0, "ssim": 0.42, "slide_idx": 1}

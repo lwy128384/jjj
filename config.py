@@ -25,20 +25,9 @@ VISUAL_SAMPLE_FPS = 1          # 每秒采样帧数（用于分析）
 # 若摄像机位置偏左/偏右或远景镜头，请按实际讲台位置重新调整
 PODIUM_REGION = (0.38, 0.42, 0.66, 0.94)
 
-# PPT 区域参数（相对坐标）
-# 若 PPT_AUTO_REGION=True：会依据是否全屏 PPT 自动在以下两套区域间切换
-PPT_AUTO_REGION = True
-# 全屏投影常用区域（覆盖上方大部分画面）
-PPT_REGION_FULLSCREEN = (0.00, 0.00, 1.00, 0.90)
-# 分屏/教室场景常用区域（覆盖上方屏幕，避开下方听众）
-PPT_REGION_SPLIT = (0.02, 0.02, 0.98, 0.80)
-# 兼容旧参数（当未启用自动模式时作为回退）
-PPT_REGION = PPT_REGION_SPLIT
-
-# 全屏 PPT 判定阈值
-FULLSCREEN_BRIGHT_RATIO = 0.35
-FULLSCREEN_LOW_SAT_RATIO = 0.45
-FULLSCREEN_EDGE_RATIO = 0.02
+# PPT 区域参数（相对坐标，左/上/右/下）
+# 建议覆盖投影屏幕主体，尽量避开下方听众区域
+PPT_REGION = (0.02, 0.02, 0.98, 0.80)
 
 # 幻灯片切换 SSIM 阈值（越小越灵敏，0~1）
 SLIDE_CHANGE_THRESHOLD = 0.70
