@@ -222,6 +222,8 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
             full_ppt    = is_fullscreen_ppt(frame)
             ppt_region  = get_active_ppt_region(full_ppt)
+            # 全屏课件时，背景减除对教师检测容易失真，默认按“在讲台”处理，
+            # 后续可在步骤5结合静默与多模态规则进一步过滤疑似干扰片段。
             in_podium   = bool(
                 fg_ratio > TEACHER_PRESENCE_THRESHOLD or full_ppt
             )
@@ -241,7 +243,10 @@ def analyze_video_visual(video_path, output_dir, video_name):
                     ssim = compute_ssim_fast(prev_crop, curr_crop)
                 else:
                     if not warned_bad_crop:
-                        print("  警告: PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT 区域参数。")
+                        print(
+                            "  警告: PPT 区域裁剪为空，回退到整帧 SSIM；"
+                            f"prev_region={prev_ppt_region}, curr_region={ppt_region}"
+                        )
                         warned_bad_crop = True
                     ssim = compute_ssim_fast(prev_frame, frame)
                 if ssim < SLIDE_CHANGE_THRESHOLD:
