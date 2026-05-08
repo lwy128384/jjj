@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import argparse
+import re
 from pathlib import Path
 from tqdm import tqdm
 
@@ -102,6 +103,32 @@ def init_ocr():
         return None
 
 
+def normalize_ocr_text(text):
+    """清洗 OCR 文本，过滤仅空白/符号内容。"""
+    if not text:
+        return ""
+    text = re.sub(r"\s+", " ", str(text)).strip()
+    if not text:
+        return ""
+    if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", text):
+        return ""
+    return text
+
+
+def _extract_text_from_ocr_results(results, min_conf):
+    texts = []
+    for item in results:
+        if not isinstance(item, (list, tuple)) or len(item) < 3:
+            continue
+        _, txt, conf = item[:3]
+        if conf is None or conf < min_conf:
+            continue
+        cleaned = normalize_ocr_text(txt)
+        if cleaned:
+            texts.append(cleaned)
+    return normalize_ocr_text(" ".join(texts))
+
+
 def run_ocr(reader, frame, region, min_conf):
     """对帧的指定区域做 OCR，返回识别文本"""
     if reader is None:
@@ -110,8 +137,20 @@ def run_ocr(reader, frame, region, min_conf):
     if crop.size == 0:
         return ""
     try:
-        results = reader.readtext(crop, detail=1, paragraph=True)
-        return " ".join(t for _, t, c in results if c >= min_conf).strip()
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        thr = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
+        )
+        ocr_inputs = [crop, gray, thr]
+        confs = [min_conf, max(0.20, min_conf * 0.75)]
+
+        for conf in confs:
+            for img in ocr_inputs:
+                results = reader.readtext(img, detail=1, paragraph=True)
+                text = _extract_text_from_ocr_results(results, conf)
+                if text:
+                    return text
+        return ""
     except Exception:
         return ""
 
@@ -247,6 +286,13 @@ def analyze_video_visual(video_path, output_dir, video_name):
                         if new_text:
                             segment_last_text = new_text
                         segment_last_time = ts
+                if not segment_last_text:
+                    retry_text = run_ocr(
+                        ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
+                    )
+                    if retry_text:
+                        segment_last_text = retry_text
+                        segment_last_time = ts
                 else:
                     if not warned_empty_fullscreen_crop:
                         print("  警告: 全屏 PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT_REGION_FULLSCREEN 参数。")
@@ -272,7 +318,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
                     ppt_content.append({
                         "time":      segment_last_time,
                         "slide_idx": slide_idx,
-                        "text":      segment_last_text,
+                        "text":      normalize_ocr_text(segment_last_text),
                     })
                 in_fullscreen_segment = False
                 segment_last_text = ""
@@ -295,7 +341,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
         ppt_content.append({
             "time":      segment_last_time,
             "slide_idx": slide_idx,
-            "text":      segment_last_text,
+            "text":      normalize_ocr_text(segment_last_text),
         })
 
     present_cnt = sum(1 for t in teacher_timeline if t["in_podium"])
