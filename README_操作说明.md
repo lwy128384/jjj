@@ -504,10 +504,10 @@ venv\Scripts\activate
 | `TEACHER_PRESENCE_THRESHOLD` | 0.05 | 教师检测阈值 | 减小可提高检测率 |
 | `WHISPER_MODEL_SIZE` | "base" | Whisper 模型 | tiny/base/small/medium |
 | `DIARIZATION_N_CLUSTERS` | 2 | 说话人聚类类别数 | 课堂场景建议固定 2（教师/学生） |
-| `DIARIZATION_TEXT_WEIGHT` / `DIARIZATION_ACOUSTIC_WEIGHT` | 0.60 / 0.40 | 文本/声学融合权重 | 教师口语识别错分多时适当提高文本权重 |
+| `DIARIZATION_TEXT_WEIGHT` / `DIARIZATION_ACOUSTIC_WEIGHT` | 0.38 / 0.62 | 文本/声学融合权重 | 课堂讲授场景建议以声学为主，文本作辅助 |
 | `DIARIZATION_SMOOTH_MAX_DURATION` | 4.0 | 孤立短片段平滑时长上限（秒） | 增大可减少抖动，过大可能过平滑 |
 | `DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD` | 0.82 | 声纹回标阈值 | 降低可更激进地把学生改判为教师 |
-| `DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES` | 4 | 构建教师声纹原型的最少教师片段数 | 教师样本太少时建议升高，避免误回标 |
+| `DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES` | 2 | 构建教师声纹原型的最少教师片段数 | 样本少时可先用较低值快速启动复判，再按误判情况回调 |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
 | `MIN_KNOWLEDGE_DURATION` | 45 | 最短知识点（秒）| 增大可避免过度切分 |
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |

@@ -69,32 +69,33 @@ MAX_SPEAKERS = 2
 DIARIZATION_N_CLUSTERS = 2
 
 # 文本特征（教师话术 / 学生提问话术）融合权重
-DIARIZATION_TEXT_WEIGHT = 0.60
-DIARIZATION_ACOUSTIC_WEIGHT = 0.40
+DIARIZATION_TEXT_WEIGHT = 0.38
+DIARIZATION_ACOUSTIC_WEIGHT = 0.62
 
 # 教师常见课堂表达（命中越多，越偏向教师）
 DIARIZATION_TEACHER_CUES = [
     "我们", "下面", "今天", "讲", "来看", "举个例子", "同学们", "回顾",
     "总结", "总之", "注意", "定义", "公式", "原理", "人工智能", "历史",
     "先", "然后", "接下来", "这个问题",
+    "嗯", "啊", "这个", "那个", "就是", "那么", "大家", "注意看", "来看一下",
 ]
 
 # 学生常见提问表达（命中越多，越偏向学生）
 DIARIZATION_STUDENT_CUES = [
-    "老师", "请问", "我想问", "是不是", "对吗", "吗", "呢", "为什么", "怎么",
+    "老师", "请问", "我想问", "是不是", "对吗", "为什么", "怎么",
     "听不清", "没听懂", "可以再说", "啥意思",
 ]
 
 # 上下文平滑：修正时间上孤立的误判片段
-DIARIZATION_SMOOTH_WINDOW = 2
+DIARIZATION_SMOOTH_WINDOW = 3
 DIARIZATION_SMOOTH_MAX_DURATION = 4.0
 DIARIZATION_SMOOTH_MIN_NEIGHBORS = 2
 
 # 声纹辅助复判（先用已判教师片段提取教师共同声纹，再回查学生片段）
 DIARIZATION_VOICEPRINT_ASSIST_ENABLED = True
-DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = 4
+DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = 2
 DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION = 0.8
-DIARIZATION_VOICEPRINT_MAX_STUDENT_DURATION = 20.0
+DIARIZATION_VOICEPRINT_MAX_STUDENT_DURATION = 40.0
 DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD = 0.82
 DIARIZATION_VOICEPRINT_STUDENT_MARGIN = 0.03
 
