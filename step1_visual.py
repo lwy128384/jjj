@@ -41,6 +41,7 @@ try:
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
     OCR_CONFIDENCE_THRESHOLD   = _cfg.OCR_CONFIDENCE_THRESHOLD
     OCR_FALLBACK_MIN_CONFIDENCE = getattr(_cfg, "OCR_FALLBACK_MIN_CONFIDENCE", 0.20)
+    OCR_FALLBACK_CONF_MULTIPLIER = getattr(_cfg, "OCR_FALLBACK_CONF_MULTIPLIER", 0.75)
     OCR_ADAPTIVE_BLOCK_SIZE    = getattr(_cfg, "OCR_ADAPTIVE_BLOCK_SIZE", 31)
     OCR_ADAPTIVE_C             = getattr(_cfg, "OCR_ADAPTIVE_C", 11)
 except ImportError:
@@ -57,6 +58,7 @@ except ImportError:
     BG_INIT_FRAMES             = 30
     OCR_CONFIDENCE_THRESHOLD   = 0.40
     OCR_FALLBACK_MIN_CONFIDENCE = 0.20
+    OCR_FALLBACK_CONF_MULTIPLIER = 0.75
     OCR_ADAPTIVE_BLOCK_SIZE    = 31
     OCR_ADAPTIVE_C             = 11
 
@@ -144,7 +146,7 @@ def run_ocr(reader, frame, region, min_conf):
         return ""
     try:
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        thr = cv2.adaptiveThreshold(
+        threshold_image = cv2.adaptiveThreshold(
             gray,
             255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -152,8 +154,11 @@ def run_ocr(reader, frame, region, min_conf):
             OCR_ADAPTIVE_BLOCK_SIZE,
             OCR_ADAPTIVE_C,
         )
-        ocr_inputs = [crop, gray, thr]
-        confs = [min_conf, max(OCR_FALLBACK_MIN_CONFIDENCE, min_conf * 0.75)]
+        ocr_inputs = [crop, gray, threshold_image]
+        confs = [
+            min_conf,
+            max(OCR_FALLBACK_MIN_CONFIDENCE, min_conf * OCR_FALLBACK_CONF_MULTIPLIER),
+        ]
 
         for conf in confs:
             for img in ocr_inputs:
@@ -296,7 +301,9 @@ def analyze_video_visual(video_path, output_dir, video_name):
                         )
                         if new_text:
                             segment_last_text = new_text
-                        segment_last_time = ts
+                            segment_last_time = ts
+                        elif segment_last_text:
+                            segment_last_time = ts
                 if not segment_last_text:
                     retry_text = run_ocr(
                         ocr_reader, frame, ppt_region, OCR_CONFIDENCE_THRESHOLD
@@ -317,7 +324,9 @@ def analyze_video_visual(video_path, output_dir, video_name):
                             )
                             if new_text:
                                 segment_last_text = new_text
-                            segment_last_time = ts
+                                segment_last_time = ts
+                            elif segment_last_text:
+                                segment_last_time = ts
             else:
                 if in_fullscreen_segment and segment_last_time is not None:
                     slide_idx += 1
