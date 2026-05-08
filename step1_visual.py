@@ -34,11 +34,18 @@ try:
     PPT_REGION_FULLSCREEN      = getattr(_cfg, "PPT_REGION_FULLSCREEN", (0.00, 0.00, 1.00, 0.90))
     FULLSCREEN_BRIGHT_RATIO    = getattr(_cfg, "FULLSCREEN_BRIGHT_RATIO", 0.35)
     FULLSCREEN_LOW_SAT_RATIO   = getattr(_cfg, "FULLSCREEN_LOW_SAT_RATIO", 0.45)
-    FULLSCREEN_EDGE_RATIO      = getattr(_cfg, "FULLSCREEN_EDGE_RATIO", 0.02)
+    FULLSCREEN_EDGE_RATIO      = getattr(_cfg, "FULLSCREEN_EDGE_RATIO", 0.005)
     SLIDE_CHANGE_THRESHOLD     = _cfg.SLIDE_CHANGE_THRESHOLD
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
     OCR_CONFIDENCE_THRESHOLD   = _cfg.OCR_CONFIDENCE_THRESHOLD
+    OCR_RELAXED_CONFIDENCE_MIN = getattr(_cfg, "OCR_RELAXED_CONFIDENCE_MIN", 0.08)
+    OCR_RELAXED_CONFIDENCE_FACTOR = getattr(_cfg, "OCR_RELAXED_CONFIDENCE_FACTOR", 0.50)
+    OCR_UPSCALE_MIN_DIM        = getattr(_cfg, "OCR_UPSCALE_MIN_DIM", 600)
+    OCR_UPSCALE_FACTOR         = getattr(_cfg, "OCR_UPSCALE_FACTOR", 2.0)
+    OCR_GAUSSIAN_KERNEL        = getattr(_cfg, "OCR_GAUSSIAN_KERNEL", 1)
+    OCR_ADAPTIVE_BLOCK_SIZE    = getattr(_cfg, "OCR_ADAPTIVE_BLOCK_SIZE", 21)
+    OCR_ADAPTIVE_C             = getattr(_cfg, "OCR_ADAPTIVE_C", 5)
 except ImportError:
     OUTPUT_DIR                 = r"D:\video\output"
     VISUAL_SAMPLE_FPS          = 1
@@ -47,12 +54,18 @@ except ImportError:
     PPT_REGION_FULLSCREEN      = (0.00, 0.00, 1.00, 0.90)
     FULLSCREEN_BRIGHT_RATIO    = 0.35
     FULLSCREEN_LOW_SAT_RATIO   = 0.45
-    FULLSCREEN_EDGE_RATIO      = 0.02
+    FULLSCREEN_EDGE_RATIO      = 0.005
     SLIDE_CHANGE_THRESHOLD     = 0.70
     TEACHER_PRESENCE_THRESHOLD = 0.05
     BG_INIT_FRAMES             = 30
-    OCR_CONFIDENCE_THRESHOLD   = 0.40
-
+    OCR_CONFIDENCE_THRESHOLD   = 0.15
+    OCR_RELAXED_CONFIDENCE_MIN = 0.08
+    OCR_RELAXED_CONFIDENCE_FACTOR = 0.50
+    OCR_UPSCALE_MIN_DIM        = 600
+    OCR_UPSCALE_FACTOR         = 2.0
+    OCR_GAUSSIAN_KERNEL        = 1
+    OCR_ADAPTIVE_BLOCK_SIZE    = 21
+    OCR_ADAPTIVE_C             = 5
 
 # ============================================================
 # 工具函数
@@ -109,10 +122,58 @@ def run_ocr(reader, frame, region, min_conf):
     crop = region_crop(frame, region)
     if crop.size == 0:
         return ""
+    
     try:
-        results = reader.readtext(crop, detail=1, paragraph=True)
-        return " ".join(t for _, t, c in results if c >= min_conf).strip()
-    except Exception:
+        # ========== 第1步：先放大 ==========
+        h, w = crop.shape[:2]
+        if min(h, w) < OCR_UPSCALE_MIN_DIM:
+            crop = cv2.resize(
+                crop, None,
+                fx=OCR_UPSCALE_FACTOR,
+                fy=OCR_UPSCALE_FACTOR,
+                interpolation=cv2.INTER_CUBIC
+            )
+        
+        # ========== 第2步：原图识别，不合并段落 ==========
+        results = reader.readtext(crop, detail=1, paragraph=False)
+        print(f"  [OCR调试] 检测到 {len(results)} 个文本框")  # 调试输出
+        
+        texts = []
+        for _, t, c in results:
+            clean = str(t).strip()
+            if clean and c >= min_conf:
+                texts.append(clean)
+        
+        if texts:
+            result_text = " ".join(texts).strip()
+            print(f"  [OCR调试] 识别结果: '{result_text[:50]}...'")  # 调试输出
+            return result_text
+        
+        # ========== 第3步：fallback - CLAHE 增强对比度 ==========
+        lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        l = clahe.apply(l)
+        enhanced = cv2.merge([l, a, b])
+        enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+        
+        results = reader.readtext(enhanced, detail=1, paragraph=False)
+        print(f"  [OCR调试] fallback 检测到 {len(results)} 个文本框")  # 调试输出
+        
+        texts = []
+        relaxed = max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR)
+        for _, t, c in results:
+            clean = str(t).strip()
+            if clean and c >= relaxed:
+                texts.append(clean)
+        
+        result_text = " ".join(texts).strip()
+        if result_text:
+            print(f"  [OCR调试] fallback 识别结果: '{result_text[:50]}...'")  # 调试输出
+        return result_text
+        
+    except Exception as e:
+        print(f"  OCR 异常: {e}")
         return ""
 
 
@@ -139,7 +200,6 @@ def is_fullscreen_ppt(frame):
         low_sat_ratio > FULLSCREEN_LOW_SAT_RATIO and
         edge_ratio > FULLSCREEN_EDGE_RATIO
     )
-
 
 # ============================================================
 # 核心分析
@@ -269,21 +329,21 @@ def analyze_video_visual(video_path, output_dir, video_name):
                         "ssim":      segment_last_ssim if segment_last_ssim is not None else 0.0,
                         "slide_idx": slide_idx,
                     })
+                    
                     ppt_content.append({
                         "time":      segment_last_time,
                         "slide_idx": slide_idx,
                         "text":      segment_last_text,
                     })
+            
                 in_fullscreen_segment = False
                 segment_last_text = ""
                 segment_last_time = None
                 segment_last_ssim = None
-
             prev_frame = frame.copy()
             pbar.update(1)
 
     cap.release()
-
     # 视频在全屏 PPT 段结束时收尾
     if in_fullscreen_segment and segment_last_time is not None:
         slide_idx += 1
