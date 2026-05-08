@@ -254,7 +254,8 @@ python step2_audio.py --video D:\video\lesson\高数第一章.mp4
 **功能**：
 - ffmpeg 提取 16kHz 单声道 WAV
 - faster-whisper 语音转录（带时间戳）
-- MFCC 特征聚类区分说话人（教师/学生）
+- 说话人二分类（仅“教师/学生”）：融合文本课堂用语特征 + 声学稳定性特征
+- 上下文平滑修正孤立误判片段
 - 标记每段置信度
 
 **首次运行**：自动下载 Whisper base 模型（约 150 MB）
@@ -501,6 +502,9 @@ venv\Scripts\activate
 | `FULLSCREEN_EDGE_RATIO` | 0.02 | 全屏 PPT 边缘密度阈值 | 文字较少时可下调 |
 | `TEACHER_PRESENCE_THRESHOLD` | 0.05 | 教师检测阈值 | 减小可提高检测率 |
 | `WHISPER_MODEL_SIZE` | "base" | Whisper 模型 | tiny/base/small/medium |
+| `DIARIZATION_N_CLUSTERS` | 2 | 说话人聚类类别数 | 课堂场景建议固定 2（教师/学生） |
+| `DIARIZATION_TEXT_WEIGHT` / `DIARIZATION_ACOUSTIC_WEIGHT` | 0.60 / 0.40 | 文本/声学融合权重 | 教师口语识别错分多时适当提高文本权重 |
+| `DIARIZATION_SMOOTH_MAX_DURATION` | 4.0 | 孤立短片段平滑时长上限（秒） | 增大可减少抖动，过大可能过平滑 |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
 | `MIN_KNOWLEDGE_DURATION` | 45 | 最短知识点（秒）| 增大可避免过度切分 |
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |

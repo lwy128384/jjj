@@ -62,8 +62,33 @@ WHISPER_MODEL_SIZE  = "base"   # tiny / base / small / medium
 WHISPER_LANGUAGE    = "zh"     # 语言代码；None = 自动检测
 WHISPER_BEAM_SIZE   = 3
 
-MIN_SPEAKERS = 1
-MAX_SPEAKERS = 4
+MIN_SPEAKERS = 2
+MAX_SPEAKERS = 2
+
+# 说话人区分固定为二分类：教师 / 学生
+DIARIZATION_N_CLUSTERS = 2
+
+# 文本特征（教师话术 / 学生提问话术）融合权重
+DIARIZATION_TEXT_WEIGHT = 0.60
+DIARIZATION_ACOUSTIC_WEIGHT = 0.40
+
+# 教师常见课堂表达（命中越多，越偏向教师）
+DIARIZATION_TEACHER_CUES = [
+    "我们", "下面", "今天", "讲", "来看", "举个例子", "同学们", "回顾",
+    "总结", "总之", "注意", "定义", "公式", "原理", "人工智能", "历史",
+    "先", "然后", "接下来", "这个问题",
+]
+
+# 学生常见提问表达（命中越多，越偏向学生）
+DIARIZATION_STUDENT_CUES = [
+    "老师", "请问", "我想问", "是不是", "对吗", "吗", "呢", "为什么", "怎么",
+    "听不清", "没听懂", "可以再说", "啥意思",
+]
+
+# 上下文平滑：修正时间上孤立的误判片段
+DIARIZATION_SMOOTH_WINDOW = 2
+DIARIZATION_SMOOTH_MAX_DURATION = 4.0
+DIARIZATION_SMOOTH_MIN_NEIGHBORS = 2
 
 SPEECH_CONFIDENCE_THRESHOLD = 0.60   # 低于此值 → 低置信度
 NO_SPEECH_PROB_THRESHOLD    = 0.50   # 高于此值 → 视为非语音/静默

@@ -34,6 +34,14 @@ try:
     WHISPER_BEAM_SIZE           = _cfg.WHISPER_BEAM_SIZE
     MIN_SPEAKERS                = _cfg.MIN_SPEAKERS
     MAX_SPEAKERS                = _cfg.MAX_SPEAKERS
+    DIARIZATION_N_CLUSTERS      = _cfg.DIARIZATION_N_CLUSTERS
+    DIARIZATION_TEXT_WEIGHT     = _cfg.DIARIZATION_TEXT_WEIGHT
+    DIARIZATION_ACOUSTIC_WEIGHT = _cfg.DIARIZATION_ACOUSTIC_WEIGHT
+    DIARIZATION_TEACHER_CUES    = _cfg.DIARIZATION_TEACHER_CUES
+    DIARIZATION_STUDENT_CUES    = _cfg.DIARIZATION_STUDENT_CUES
+    DIARIZATION_SMOOTH_WINDOW   = _cfg.DIARIZATION_SMOOTH_WINDOW
+    DIARIZATION_SMOOTH_MAX_DURATION = _cfg.DIARIZATION_SMOOTH_MAX_DURATION
+    DIARIZATION_SMOOTH_MIN_NEIGHBORS = _cfg.DIARIZATION_SMOOTH_MIN_NEIGHBORS
     SPEECH_CONFIDENCE_THRESHOLD = _cfg.SPEECH_CONFIDENCE_THRESHOLD
     NO_SPEECH_PROB_THRESHOLD    = _cfg.NO_SPEECH_PROB_THRESHOLD
 except ImportError:
@@ -41,8 +49,23 @@ except ImportError:
     WHISPER_MODEL_SIZE          = "base"
     WHISPER_LANGUAGE            = "zh"
     WHISPER_BEAM_SIZE           = 3
-    MIN_SPEAKERS                = 1
-    MAX_SPEAKERS                = 4
+    MIN_SPEAKERS                = 2
+    MAX_SPEAKERS                = 2
+    DIARIZATION_N_CLUSTERS      = 2
+    DIARIZATION_TEXT_WEIGHT     = 0.60
+    DIARIZATION_ACOUSTIC_WEIGHT = 0.40
+    DIARIZATION_TEACHER_CUES    = [
+        "我们", "下面", "今天", "讲", "来看", "举个例子", "同学们", "回顾",
+        "总结", "总之", "注意", "定义", "公式", "原理", "人工智能", "历史",
+        "先", "然后", "接下来", "这个问题",
+    ]
+    DIARIZATION_STUDENT_CUES    = [
+        "老师", "请问", "我想问", "是不是", "对吗", "吗", "呢", "为什么", "怎么",
+        "听不清", "没听懂", "可以再说", "啥意思",
+    ]
+    DIARIZATION_SMOOTH_WINDOW   = 2
+    DIARIZATION_SMOOTH_MAX_DURATION = 4.0
+    DIARIZATION_SMOOTH_MIN_NEIGHBORS = 2
     SPEECH_CONFIDENCE_THRESHOLD = 0.60
     NO_SPEECH_PROB_THRESHOLD    = 0.50
 
@@ -135,15 +158,14 @@ def transcribe(audio_path):
 
 def diarize_speakers(audio_path, segments):
     """
-    基于 MFCC 特征的简单说话人聚类。
-    发言时长最多的说话人标为「教师」。
+    基于声学 + 文本特征的二分类说话人聚类（教师 / 学生）。
     """
     if len(segments) < 2:
         for s in segments:
             s["speaker"] = "教师"
-        return segments, ["教师"]
+        return segments, ["教师", "学生"]
 
-    print("  说话人区分（MFCC 聚类）…")
+    print("  说话人区分（二分类聚类 + 文本声学融合）…")
 
     try:
         import librosa
@@ -153,12 +175,65 @@ def diarize_speakers(audio_path, segments):
         print("  警告: 缺少 librosa 或 scikit-learn，所有片段归为「教师」")
         for s in segments:
             s["speaker"] = "教师"
-        return segments, ["教师"]
+        return segments, ["教师", "学生"]
+
+    def _safe_zscore(arr):
+        arr = np.asarray(arr, dtype=float)
+        if len(arr) == 0:
+            return arr
+        std = np.std(arr)
+        if std < 1e-6:
+            return np.zeros_like(arr)
+        return (arr - np.mean(arr)) / std
+
+    def _text_teacher_score(text):
+        t = (text or "").strip()
+        if not t:
+            return -0.2
+        teacher_hits = sum(1 for cue in DIARIZATION_TEACHER_CUES if cue in t)
+        student_hits = sum(1 for cue in DIARIZATION_STUDENT_CUES if cue in t)
+        question_hits = t.count("？") + t.count("?")
+        length_bonus = min(len(t) / 45.0, 1.0)
+        return (
+            teacher_hits * 1.0
+            - student_hits * 1.2
+            - question_hits * 0.8
+            + length_bonus
+        )
+
+    def _smooth_labels_inplace(segs):
+        n = len(segs)
+        if n <= 2:
+            return
+        labels = [s.get("speaker", "教师") for s in segs]
+        for i in range(n):
+            cur_label = labels[i]
+            cur_dur = float(segs[i]["end"] - segs[i]["start"])
+            if cur_dur > DIARIZATION_SMOOTH_MAX_DURATION:
+                continue
+            left = max(0, i - DIARIZATION_SMOOTH_WINDOW)
+            right = min(n, i + DIARIZATION_SMOOTH_WINDOW + 1)
+            neigh = [labels[j] for j in range(left, right) if j != i]
+            if len(neigh) < DIARIZATION_SMOOTH_MIN_NEIGHBORS:
+                continue
+            teacher_votes = sum(1 for x in neigh if x == "教师")
+            student_votes = sum(1 for x in neigh if x == "学生")
+            if teacher_votes == student_votes:
+                continue
+            maj = "教师" if teacher_votes > student_votes else "学生"
+            maj_votes = max(teacher_votes, student_votes)
+            if maj != cur_label and maj_votes >= DIARIZATION_SMOOTH_MIN_NEIGHBORS:
+                labels[i] = maj
+        for i, s in enumerate(segs):
+            s["speaker"] = labels[i]
 
     try:
         audio, sr = librosa.load(str(audio_path), sr=16000, mono=True)
 
         feats, valid_idx = [], []
+        durations = []
+        acoustic_variance = []
+        text_scores_raw = []
         for i, seg in enumerate(segments):
             ss = int(seg["start"] * sr)
             es = int(seg["end"]   * sr)
@@ -166,20 +241,28 @@ def diarize_speakers(audio_path, segments):
             if len(chunk) < sr * 0.4:          # 太短则跳过
                 continue
             mfcc = librosa.feature.mfcc(y=chunk, sr=sr, n_mfcc=20)
-            feat = np.concatenate([mfcc.mean(axis=1), mfcc.std(axis=1)])
+            rms = librosa.feature.rms(y=chunk)[0]
+            centroid = librosa.feature.spectral_centroid(y=chunk, sr=sr)[0]
+            mfcc_std = float(np.mean(mfcc.std(axis=1)))
+            rms_cv = float(np.std(rms) / (np.mean(rms) + 1e-6))
+            centroid_cv = float(np.std(centroid) / (np.mean(centroid) + 1e-6))
+            var_score = mfcc_std + rms_cv + centroid_cv
+
+            feat = np.concatenate([mfcc.mean(axis=1), mfcc.std(axis=1), [var_score]])
             feats.append(feat)
             valid_idx.append(i)
+            durations.append(float(seg["end"] - seg["start"]))
+            acoustic_variance.append(var_score)
+            text_scores_raw.append(_text_teacher_score(seg.get("text", "")))
 
         if len(valid_idx) < 2:
             for s in segments:
                 s["speaker"] = "教师"
-            return segments, ["教师"]
+            return segments, ["教师", "学生"]
 
         X = StandardScaler().fit_transform(np.array(feats))
 
-        # 自动估计说话人数：每 10 段预设 1 人，上下限约束
-        n_spk = max(MIN_SPEAKERS,
-                    min(MAX_SPEAKERS, len(valid_idx) // 10 + 1))
+        n_spk = max(2, int(DIARIZATION_N_CLUSTERS))
         n_spk = min(n_spk, len(valid_idx))
 
         if n_spk == 1:
@@ -189,18 +272,24 @@ def diarize_speakers(audio_path, segments):
                 n_clusters=n_spk, metric="euclidean", linkage="ward"
             ).fit_predict(X)
 
-        # 统计每类发言时长，时长最长 → 教师
-        dur_map = {}
-        for vi, lb in zip(valid_idx, labels):
-            dur_map[lb] = dur_map.get(lb, 0) + (segments[vi]["end"] - segments[vi]["start"])
+        z_dur = _safe_zscore(durations)
+        z_stable = -_safe_zscore(acoustic_variance)   # 越稳定越像教师
+        z_text = _safe_zscore(text_scores_raw)
+        teacher_scores = (
+            DIARIZATION_ACOUSTIC_WEIGHT * (0.5 * z_dur + 0.5 * z_stable)
+            + DIARIZATION_TEXT_WEIGHT * z_text
+        )
 
-        sorted_labels = sorted(dur_map, key=dur_map.get, reverse=True)
-        name_map = {lb: ("教师" if i == 0 else f"学生{i}") for i, lb in enumerate(sorted_labels)}
+        cluster_score = {}
+        for idx_local, lb in enumerate(labels):
+            cluster_score.setdefault(lb, []).append(float(teacher_scores[idx_local]))
+        cluster_score = {lb: float(np.mean(v)) for lb, v in cluster_score.items()}
+        teacher_lb = max(cluster_score, key=cluster_score.get)
 
         # idx → speaker name map
         idx2spk = {}
         for vi, lb in zip(valid_idx, labels):
-            idx2spk[vi] = name_map[lb]
+            idx2spk[vi] = "教师" if lb == teacher_lb else "学生"
 
         for i, seg in enumerate(segments):
             if i in idx2spk:
@@ -208,10 +297,11 @@ def diarize_speakers(audio_path, segments):
             else:
                 # 最近有效帧的说话人
                 nearest = min(valid_idx, key=lambda j: abs(j - i))
-                lb = labels[valid_idx.index(nearest)]
-                seg["speaker"] = name_map[lb]
+                seg["speaker"] = idx2spk.get(nearest, "教师")
 
-        speakers = [name_map[lb] for lb in sorted_labels]
+        _smooth_labels_inplace(segments)
+
+        speakers = ["教师", "学生"]
         print(f"  说话人: {speakers}")
         return segments, speakers
 
@@ -219,7 +309,7 @@ def diarize_speakers(audio_path, segments):
         print(f"  说话人区分出错（{e}），全部标为「教师」")
         for s in segments:
             s["speaker"] = "教师"
-        return segments, ["教师"]
+        return segments, ["教师", "学生"]
 
 
 # ============================================================
