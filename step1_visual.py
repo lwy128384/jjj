@@ -179,7 +179,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
     ppt_content       = []
 
     prev_frame       = None
-    warned_bad_crop  = False
+    warned_empty_fullscreen_crop = False
     slide_idx        = 0
     current_ppt_text = ""
     kernel           = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -212,18 +212,18 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN,   kernel)
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_DILATE, kernel)
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
-            full_ppt    = is_fullscreen_ppt(frame)
-            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD or full_ppt)
+            fullscreen_ppt = is_fullscreen_ppt(frame)
+            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD or fullscreen_ppt)
 
             teacher_timeline.append({
                 "time":        ts,
                 "in_podium":   in_podium,
                 "motion_ratio": round(fg_ratio, 4),
-                "full_screen_ppt": full_ppt,
+                "full_screen_ppt": fullscreen_ppt,
             })
 
             # —— 仅在全屏 PPT 时进行翻页/OCR 检测 ——
-            if full_ppt:
+            if fullscreen_ppt:
                 ppt_region = PPT_REGION_FULLSCREEN
                 curr_crop = region_crop(frame, ppt_region)
                 if not in_fullscreen_segment:
@@ -248,9 +248,9 @@ def analyze_video_visual(video_path, output_dir, video_name):
                             segment_last_text = new_text
                         segment_last_time = ts
                 else:
-                    if not warned_bad_crop:
+                    if not warned_empty_fullscreen_crop:
                         print("  警告: 全屏 PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT_REGION_FULLSCREEN 参数。")
-                        warned_bad_crop = True
+                        warned_empty_fullscreen_crop = True
                     if prev_frame is not None:
                         ssim = compute_ssim_fast(prev_frame, frame)
                         if ssim < SLIDE_CHANGE_THRESHOLD:
