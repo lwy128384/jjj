@@ -4,7 +4,7 @@
 步骤2: 语音维度分析
   1. 从视频提取音频（ffmpeg）
   2. 语音转录（faster-whisper，纯 CPU）
-  3. 说话人区分（MFCC 聚类）
+  3. 说话人区分（二分类聚类 + 声纹辅助复判）
   4. 置信度标记
 
 运行方式:
@@ -42,6 +42,12 @@ try:
     DIARIZATION_SMOOTH_WINDOW   = _cfg.DIARIZATION_SMOOTH_WINDOW
     DIARIZATION_SMOOTH_MAX_DURATION = _cfg.DIARIZATION_SMOOTH_MAX_DURATION
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = _cfg.DIARIZATION_SMOOTH_MIN_NEIGHBORS
+    DIARIZATION_VOICEPRINT_ASSIST_ENABLED = _cfg.DIARIZATION_VOICEPRINT_ASSIST_ENABLED
+    DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = _cfg.DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES
+    DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION = _cfg.DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION
+    DIARIZATION_VOICEPRINT_MAX_STUDENT_DURATION = _cfg.DIARIZATION_VOICEPRINT_MAX_STUDENT_DURATION
+    DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD = _cfg.DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD
+    DIARIZATION_VOICEPRINT_STUDENT_MARGIN = _cfg.DIARIZATION_VOICEPRINT_STUDENT_MARGIN
     SPEECH_CONFIDENCE_THRESHOLD = _cfg.SPEECH_CONFIDENCE_THRESHOLD
     NO_SPEECH_PROB_THRESHOLD    = _cfg.NO_SPEECH_PROB_THRESHOLD
 except ImportError:
@@ -66,6 +72,12 @@ except ImportError:
     DIARIZATION_SMOOTH_WINDOW   = 2
     DIARIZATION_SMOOTH_MAX_DURATION = 4.0
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = 2
+    DIARIZATION_VOICEPRINT_ASSIST_ENABLED = True
+    DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = 4
+    DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION = 0.8
+    DIARIZATION_VOICEPRINT_MAX_STUDENT_DURATION = 20.0
+    DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD = 0.82
+    DIARIZATION_VOICEPRINT_STUDENT_MARGIN = 0.03
     SPEECH_CONFIDENCE_THRESHOLD = 0.60
     NO_SPEECH_PROB_THRESHOLD    = 0.50
 
@@ -201,6 +213,20 @@ def diarize_speakers(audio_path, segments):
             + length_bonus
         )
 
+    def _l2_normalize(vec):
+        vec = np.asarray(vec, dtype=float)
+        nrm = np.linalg.norm(vec)
+        if nrm < 1e-8:
+            return vec
+        return vec / nrm
+
+    def _cosine_sim(a, b):
+        an = np.linalg.norm(a)
+        bn = np.linalg.norm(b)
+        if an < 1e-8 or bn < 1e-8:
+            return 0.0
+        return float(np.dot(a, b) / (an * bn))
+
     def _smooth_labels_inplace(segs):
         n = len(segs)
         if n <= 2:
@@ -227,6 +253,42 @@ def diarize_speakers(audio_path, segments):
         for i, s in enumerate(segs):
             s["speaker"] = labels[i]
 
+    def _voiceprint_relabel_inplace(segs, valid_indices, voiceprints):
+        if not DIARIZATION_VOICEPRINT_ASSIST_ENABLED:
+            return 0
+        if len(valid_indices) != len(voiceprints) or not valid_indices:
+            return 0
+
+        idx2vp = {vi: _l2_normalize(vp) for vi, vp in zip(valid_indices, voiceprints)}
+        teacher_vecs = [idx2vp[vi] for vi in valid_indices if segs[vi].get("speaker") == "教师"]
+        if len(teacher_vecs) < DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES:
+            return 0
+
+        teacher_proto = _l2_normalize(np.mean(teacher_vecs, axis=0))
+        student_vecs = [idx2vp[vi] for vi in valid_indices if segs[vi].get("speaker") == "学生"]
+        student_proto = _l2_normalize(np.mean(student_vecs, axis=0)) if student_vecs else None
+
+        changed = 0
+        for vi in valid_indices:
+            if segs[vi].get("speaker") != "学生":
+                continue
+            seg_dur = float(segs[vi]["end"] - segs[vi]["start"])
+            if seg_dur < DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION:
+                continue
+            if DIARIZATION_VOICEPRINT_MAX_STUDENT_DURATION > 0 and seg_dur > DIARIZATION_VOICEPRINT_MAX_STUDENT_DURATION:
+                continue
+
+            vp = idx2vp[vi]
+            sim_teacher = _cosine_sim(vp, teacher_proto)
+            sim_student = _cosine_sim(vp, student_proto) if student_proto is not None else -1.0
+
+            if sim_teacher >= DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD and (
+                student_proto is None or sim_teacher - sim_student >= DIARIZATION_VOICEPRINT_STUDENT_MARGIN
+            ):
+                segs[vi]["speaker"] = "教师"
+                changed += 1
+        return changed
+
     try:
         audio, sr = librosa.load(str(audio_path), sr=16000, mono=True)
 
@@ -234,6 +296,7 @@ def diarize_speakers(audio_path, segments):
         durations = []
         acoustic_variance = []
         text_scores_raw = []
+        voiceprints = []
         for i, seg in enumerate(segments):
             ss = int(seg["start"] * sr)
             es = int(seg["end"]   * sr)
@@ -243,13 +306,23 @@ def diarize_speakers(audio_path, segments):
             mfcc = librosa.feature.mfcc(y=chunk, sr=sr, n_mfcc=20)
             rms = librosa.feature.rms(y=chunk)[0]
             centroid = librosa.feature.spectral_centroid(y=chunk, sr=sr)[0]
+            delta = librosa.feature.delta(mfcc)
+            contrast = librosa.feature.spectral_contrast(y=chunk, sr=sr)
+            zcr = librosa.feature.zero_crossing_rate(y=chunk)[0]
             mfcc_std = float(np.mean(mfcc.std(axis=1)))
             rms_cv = float(np.std(rms) / (np.mean(rms) + 1e-6))
             centroid_cv = float(np.std(centroid) / (np.mean(centroid) + 1e-6))
             var_score = mfcc_std + rms_cv + centroid_cv
 
             feat = np.concatenate([mfcc.mean(axis=1), mfcc.std(axis=1), [var_score]])
+            voiceprint_feat = np.concatenate([
+                mfcc.mean(axis=1),
+                delta.mean(axis=1),
+                contrast.mean(axis=1),
+                [float(np.mean(zcr)), float(np.mean(rms))]
+            ])
             feats.append(feat)
+            voiceprints.append(voiceprint_feat)
             valid_idx.append(i)
             durations.append(float(seg["end"] - seg["start"]))
             acoustic_variance.append(var_score)
@@ -300,6 +373,10 @@ def diarize_speakers(audio_path, segments):
                 seg["speaker"] = idx2spk.get(nearest, "教师")
 
         _smooth_labels_inplace(segments)
+        relabeled = _voiceprint_relabel_inplace(segments, valid_idx, voiceprints)
+        if relabeled > 0:
+            print(f"  声纹辅助复判: 学生→教师 {relabeled} 段")
+            _smooth_labels_inplace(segments)
 
         speakers = ["教师", "学生"]
         print(f"  说话人: {speakers}")

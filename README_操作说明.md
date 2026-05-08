@@ -255,6 +255,7 @@ python step2_audio.py --video D:\video\lesson\高数第一章.mp4
 - ffmpeg 提取 16kHz 单声道 WAV
 - faster-whisper 语音转录（带时间戳）
 - 说话人二分类（仅“教师/学生”）：融合文本课堂用语特征 + 声学稳定性特征
+- 声纹辅助复判：从已判教师片段提取共同声纹，再回查学生片段并自动纠正
 - 上下文平滑修正孤立误判片段
 - 标记每段置信度
 
@@ -505,6 +506,8 @@ venv\Scripts\activate
 | `DIARIZATION_N_CLUSTERS` | 2 | 说话人聚类类别数 | 课堂场景建议固定 2（教师/学生） |
 | `DIARIZATION_TEXT_WEIGHT` / `DIARIZATION_ACOUSTIC_WEIGHT` | 0.60 / 0.40 | 文本/声学融合权重 | 教师口语识别错分多时适当提高文本权重 |
 | `DIARIZATION_SMOOTH_MAX_DURATION` | 4.0 | 孤立短片段平滑时长上限（秒） | 增大可减少抖动，过大可能过平滑 |
+| `DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD` | 0.82 | 声纹回标阈值 | 降低可更激进地把学生改判为教师 |
+| `DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES` | 4 | 构建教师声纹原型的最少教师片段数 | 教师样本太少时建议升高，避免误回标 |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
 | `MIN_KNOWLEDGE_DURATION` | 45 | 最短知识点（秒）| 增大可避免过度切分 |
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |
