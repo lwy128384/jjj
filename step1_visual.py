@@ -110,8 +110,27 @@ def run_ocr(reader, frame, region, min_conf):
     if crop.size == 0:
         return ""
     try:
-        results = reader.readtext(crop, detail=1, paragraph=True)
-        return " ".join(t for _, t, c in results if c >= min_conf).strip()
+        results = reader.readtext(crop, detail=1, paragraph=False)
+        texts = [t.strip() for _, t, c in results if c >= min_conf and str(t).strip()]
+        if texts:
+            return " ".join(texts).strip()
+
+        # 复杂/密集页面兜底：放宽阈值，并在灰度增强后再次识别
+        relaxed_conf = max(0.20, min_conf * 0.6)
+        texts = [t.strip() for _, t, c in results if c >= relaxed_conf and str(t).strip()]
+        if texts:
+            return " ".join(texts).strip()
+
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        if min(gray.shape[:2]) < 900:
+            gray = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        enhanced = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
+        )
+        fallback_results = reader.readtext(enhanced, detail=1, paragraph=False)
+        fallback_texts = [t.strip() for _, t, c in fallback_results if c >= relaxed_conf and str(t).strip()]
+        return " ".join(fallback_texts).strip()
     except Exception:
         return ""
 
