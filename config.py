@@ -34,7 +34,7 @@ PPT_REGION_FULLSCREEN = (0.00, 0.00, 1.00, 0.90)
 # 全屏 PPT 判定阈值
 FULLSCREEN_BRIGHT_RATIO = 0.35
 FULLSCREEN_LOW_SAT_RATIO = 0.45
-FULLSCREEN_EDGE_RATIO = 0.02
+FULLSCREEN_EDGE_RATIO = 0.005      # 从 0.02 降到 0.005，避免漏检文字少的页面
 
 # 幻灯片切换 SSIM 阈值（越小越灵敏，0~1）
 SLIDE_CHANGE_THRESHOLD = 0.70
@@ -46,7 +46,14 @@ TEACHER_PRESENCE_THRESHOLD = 0.05
 BG_INIT_FRAMES = 30
 
 # OCR 最低置信度
-OCR_CONFIDENCE_THRESHOLD = 0.40
+OCR_CONFIDENCE_THRESHOLD = 0.15      # 从 0.40 降到 0.15
+OCR_RELAXED_CONFIDENCE_MIN = 0.08  # 从 0.20 降到 0.08
+OCR_RELAXED_CONFIDENCE_FACTOR = 0.50
+OCR_UPSCALE_MIN_DIM = 600          # 从 900 降到 600，更早触发放大
+OCR_UPSCALE_FACTOR = 2.0           # 从 1.5 提高到 2.0
+OCR_GAUSSIAN_KERNEL = 1            # 从 3 降到 1，减少模糊
+OCR_ADAPTIVE_BLOCK_SIZE = 21       # 从 31 降到 21
+OCR_ADAPTIVE_C = 5                 # 从 11 降到 5
 
 # ============================================================
 # 步骤2 — 语音分析
