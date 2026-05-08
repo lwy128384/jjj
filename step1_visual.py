@@ -31,6 +31,12 @@ try:
     VISUAL_SAMPLE_FPS          = _cfg.VISUAL_SAMPLE_FPS
     PODIUM_REGION              = _cfg.PODIUM_REGION
     PPT_REGION                 = _cfg.PPT_REGION
+    PPT_AUTO_REGION            = getattr(_cfg, "PPT_AUTO_REGION", True)
+    PPT_REGION_FULLSCREEN      = getattr(_cfg, "PPT_REGION_FULLSCREEN", (0.00, 0.00, 1.00, 0.90))
+    PPT_REGION_SPLIT           = getattr(_cfg, "PPT_REGION_SPLIT", PPT_REGION)
+    FULLSCREEN_BRIGHT_RATIO    = getattr(_cfg, "FULLSCREEN_BRIGHT_RATIO", 0.35)
+    FULLSCREEN_LOW_SAT_RATIO   = getattr(_cfg, "FULLSCREEN_LOW_SAT_RATIO", 0.45)
+    FULLSCREEN_EDGE_RATIO      = getattr(_cfg, "FULLSCREEN_EDGE_RATIO", 0.02)
     SLIDE_CHANGE_THRESHOLD     = _cfg.SLIDE_CHANGE_THRESHOLD
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
@@ -38,8 +44,14 @@ try:
 except ImportError:
     OUTPUT_DIR                 = r"D:\video\output"
     VISUAL_SAMPLE_FPS          = 1
-    PODIUM_REGION              = (0.10, 0.25, 0.90, 0.95)
-    PPT_REGION                 = (0.00, 0.00, 1.00, 0.80)
+    PODIUM_REGION              = (0.38, 0.42, 0.66, 0.94)
+    PPT_REGION                 = (0.02, 0.02, 0.98, 0.80)
+    PPT_AUTO_REGION            = True
+    PPT_REGION_FULLSCREEN      = (0.00, 0.00, 1.00, 0.90)
+    PPT_REGION_SPLIT           = PPT_REGION
+    FULLSCREEN_BRIGHT_RATIO    = 0.35
+    FULLSCREEN_LOW_SAT_RATIO   = 0.45
+    FULLSCREEN_EDGE_RATIO      = 0.02
     SLIDE_CHANGE_THRESHOLD     = 0.70
     TEACHER_PRESENCE_THRESHOLD = 0.05
     BG_INIT_FRAMES             = 30
@@ -127,10 +139,17 @@ def is_fullscreen_ppt(frame):
     edge_ratio = float(np.mean(edges > 0))
 
     return bool(
-        bright_ratio > 0.35 and
-        low_sat_ratio > 0.45 and
-        edge_ratio > 0.02
+        bright_ratio > FULLSCREEN_BRIGHT_RATIO and
+        low_sat_ratio > FULLSCREEN_LOW_SAT_RATIO and
+        edge_ratio > FULLSCREEN_EDGE_RATIO
     )
+
+
+def get_active_ppt_region(full_ppt):
+    """根据是否全屏 PPT 选择 OCR/SSIM 使用的区域。"""
+    if not PPT_AUTO_REGION:
+        return PPT_REGION
+    return PPT_REGION_FULLSCREEN if full_ppt else PPT_REGION_SPLIT
 
 
 # ============================================================
@@ -171,6 +190,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
     ppt_content       = []
 
     prev_frame       = None
+    prev_ppt_region  = PPT_REGION
     slide_idx        = 0
     current_ppt_text = ""
     kernel           = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -200,6 +220,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_DILATE, kernel)
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
             full_ppt    = is_fullscreen_ppt(frame)
+            ppt_region  = get_active_ppt_region(full_ppt)
             in_podium   = bool(
                 fg_ratio > TEACHER_PRESENCE_THRESHOLD or full_ppt
             )
@@ -213,7 +234,12 @@ def analyze_video_visual(video_path, output_dir, video_name):
 
             # —— 幻灯片切换检测 ——
             if prev_frame is not None:
-                ssim = compute_ssim_fast(prev_frame, frame)
+                prev_crop = region_crop(prev_frame, prev_ppt_region)
+                curr_crop = region_crop(frame, ppt_region)
+                if prev_crop.size > 0 and curr_crop.size > 0:
+                    ssim = compute_ssim_fast(prev_crop, curr_crop)
+                else:
+                    ssim = compute_ssim_fast(prev_frame, frame)
                 if ssim < SLIDE_CHANGE_THRESHOLD:
                     slide_idx += 1
                     slide_transitions.append({
@@ -222,7 +248,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
                         "slide_idx": slide_idx,
                     })
                     # 切换时 OCR
-                    new_text = run_ocr(ocr_reader, frame, PPT_REGION,
+                    new_text = run_ocr(ocr_reader, frame, ppt_region,
                                        OCR_CONFIDENCE_THRESHOLD)
                     if new_text:
                         current_ppt_text = new_text
@@ -233,12 +259,13 @@ def analyze_video_visual(video_path, output_dir, video_name):
                     })
             else:
                 # 第一帧
-                current_ppt_text = run_ocr(ocr_reader, frame, PPT_REGION,
+                current_ppt_text = run_ocr(ocr_reader, frame, ppt_region,
                                            OCR_CONFIDENCE_THRESHOLD)
                 ppt_content.append({"time": 0.0, "slide_idx": 0,
                                     "text": current_ppt_text})
 
             prev_frame = frame.copy()
+            prev_ppt_region = ppt_region
             pbar.update(1)
 
     cap.release()
