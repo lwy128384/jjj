@@ -191,6 +191,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
 
     prev_frame       = None
     prev_ppt_region  = PPT_REGION
+    warned_bad_crop  = False
     slide_idx        = 0
     current_ppt_text = ""
     kernel           = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -239,6 +240,9 @@ def analyze_video_visual(video_path, output_dir, video_name):
                 if prev_crop.size > 0 and curr_crop.size > 0:
                     ssim = compute_ssim_fast(prev_crop, curr_crop)
                 else:
+                    if not warned_bad_crop:
+                        print("  警告: PPT 区域裁剪为空，回退到整帧 SSIM；请检查 PPT 区域参数。")
+                        warned_bad_crop = True
                     ssim = compute_ssim_fast(prev_frame, frame)
                 if ssim < SLIDE_CHANGE_THRESHOLD:
                     slide_idx += 1
