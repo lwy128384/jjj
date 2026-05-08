@@ -39,6 +39,13 @@ try:
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
     OCR_CONFIDENCE_THRESHOLD   = _cfg.OCR_CONFIDENCE_THRESHOLD
+    OCR_RELAXED_CONFIDENCE_MIN = getattr(_cfg, "OCR_RELAXED_CONFIDENCE_MIN", 0.20)
+    OCR_RELAXED_CONFIDENCE_FACTOR = getattr(_cfg, "OCR_RELAXED_CONFIDENCE_FACTOR", 0.60)
+    OCR_UPSCALE_MIN_DIM        = getattr(_cfg, "OCR_UPSCALE_MIN_DIM", 900)
+    OCR_UPSCALE_FACTOR         = getattr(_cfg, "OCR_UPSCALE_FACTOR", 1.5)
+    OCR_GAUSSIAN_KERNEL        = getattr(_cfg, "OCR_GAUSSIAN_KERNEL", 3)
+    OCR_ADAPTIVE_BLOCK_SIZE    = getattr(_cfg, "OCR_ADAPTIVE_BLOCK_SIZE", 31)
+    OCR_ADAPTIVE_C             = getattr(_cfg, "OCR_ADAPTIVE_C", 11)
 except ImportError:
     OUTPUT_DIR                 = r"D:\video\output"
     VISUAL_SAMPLE_FPS          = 1
@@ -52,6 +59,13 @@ except ImportError:
     TEACHER_PRESENCE_THRESHOLD = 0.05
     BG_INIT_FRAMES             = 30
     OCR_CONFIDENCE_THRESHOLD   = 0.40
+    OCR_RELAXED_CONFIDENCE_MIN = 0.20
+    OCR_RELAXED_CONFIDENCE_FACTOR = 0.60
+    OCR_UPSCALE_MIN_DIM        = 900
+    OCR_UPSCALE_FACTOR         = 1.5
+    OCR_GAUSSIAN_KERNEL        = 3
+    OCR_ADAPTIVE_BLOCK_SIZE    = 31
+    OCR_ADAPTIVE_C             = 11
 
 
 # ============================================================
@@ -115,18 +129,25 @@ def run_ocr(reader, frame, region, min_conf):
         if texts:
             return " ".join(texts).strip()
 
-        # 复杂/密集页面兜底：放宽阈值，并在灰度增强后再次识别
-        relaxed_conf = max(0.20, min_conf * 0.6)
+        # Fallback for dense slides: relax confidence threshold and retry with enhancement.
+        relaxed_conf = max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR)
         texts = [t.strip() for _, t, c in results if c >= relaxed_conf and str(t).strip()]
         if texts:
             return " ".join(texts).strip()
 
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        if min(gray.shape[:2]) < 900:
-            gray = cv2.resize(gray, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
-        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        if min(gray.shape[:2]) < OCR_UPSCALE_MIN_DIM:
+            gray = cv2.resize(
+                gray, None, fx=OCR_UPSCALE_FACTOR, fy=OCR_UPSCALE_FACTOR, interpolation=cv2.INTER_CUBIC
+            )
+        gray = cv2.GaussianBlur(gray, (OCR_GAUSSIAN_KERNEL, OCR_GAUSSIAN_KERNEL), 0)
         enhanced = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            OCR_ADAPTIVE_BLOCK_SIZE,
+            OCR_ADAPTIVE_C,
         )
         fallback_results = reader.readtext(enhanced, detail=1, paragraph=False)
         fallback_texts = [t.strip() for _, t, c in fallback_results if c >= relaxed_conf and str(t).strip()]
