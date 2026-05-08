@@ -20,7 +20,6 @@ import json
 import subprocess
 import argparse
 import tempfile
-import re
 import numpy as np
 from pathlib import Path
 
@@ -204,17 +203,13 @@ def diarize_speakers(audio_path, segments):
         t = (text or "").strip()
         if not t:
             return -0.2
-        t_nospace = re.sub(r"\s+", "", t)
+        t_nospace = "".join(t.split())
         teacher_hits = sum(1 for cue in DIARIZATION_TEACHER_CUES if cue in t)
         student_hits = sum(1 for cue in DIARIZATION_STUDENT_CUES if cue in t)
         question_hits = t.count("？") + t.count("?")
         filler_terms = ("嗯", "啊", "呃", "这个", "那个", "就是", "那么")
         filler_hits = sum(t_nospace.count(term) for term in filler_terms)
-        repeated_hits = 0
-        for term in ("嗯", "啊", "呃", "这个", "那个", "就是"):
-            if term * 2 in t_nospace:
-                repeated_hits += 1
-        repeated_hits += len(re.findall(r"(.)\1{1,}", t_nospace))
+        repeated_hits = sum(1 for term in filler_terms if term * 2 in t_nospace)
         length_bonus = min(len(t_nospace) / 35.0, 1.6)
         return (
             teacher_hits * 1.0
