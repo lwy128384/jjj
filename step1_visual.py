@@ -126,7 +126,7 @@ def run_ocr(reader, frame, region, min_conf):
     try:
         min_odd_size = 3
 
-        def _safe_odd_int(value, default, min_value=3):
+        def _safe_odd_int(value, default, min_value=min_odd_size):
             try:
                 n = int(value)
             except (TypeError, ValueError):
@@ -184,6 +184,7 @@ def run_ocr(reader, frame, region, min_conf):
             adaptive_block_size,
             OCR_ADAPTIVE_C,
         )
+        # Disable paragraph merge in fallback to recover fragmented dense text blocks.
         fallback_results = reader.readtext(enhanced, detail=1, paragraph=False)
         fallback_texts = []
         for _, t, c in fallback_results:
