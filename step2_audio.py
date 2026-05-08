@@ -202,26 +202,33 @@ def diarize_speakers(audio_path, segments):
         return (arr - np.mean(arr)) / std
 
     def _text_teacher_score(text):
+        LENGTH_NORM_FACTOR = 35.0
+        MAX_LENGTH_BONUS = 1.6
+        MAX_FILLER_BONUS_COUNT = 5
+        FILLER_BONUS_WEIGHT = 0.2
+        MAX_REPEAT_BONUS_COUNT = 3
+        REPEAT_BONUS_WEIGHT = 0.35
+
         t = (text or "").strip()
         if not t:
             return -0.2
-        t_nospace = "".join(t.split())
+        normalized_text = "".join(t.split())
         teacher_hits = sum(1 for cue in DIARIZATION_TEACHER_CUES if cue in t)
         student_hits = sum(1 for cue in DIARIZATION_STUDENT_CUES if cue in t)
         question_hits = t.count("？") + t.count("?")
         filler_terms = tuple(DIARIZATION_FILLER_CUES)
-        filler_hits = sum(t_nospace.count(term) for term in filler_terms)
-        repeated_hits = sum(1 for term in filler_terms if term * 2 in t_nospace)
+        filler_hits = sum(normalized_text.count(term) for term in filler_terms)
+        repeated_hits = sum(1 for term in filler_terms if term * 2 in normalized_text)
         # 教师完整讲解常明显长于学生插话，适当提高长文本加分上限。
-        length_bonus = min(len(t_nospace) / 35.0, 1.6)
+        length_bonus = min(len(normalized_text) / LENGTH_NORM_FACTOR, MAX_LENGTH_BONUS)
         return (
             teacher_hits * 1.0
             - student_hits * 1.0
             # 教师设问/反问常见，问号仅作弱惩罚，避免系统性压低教师分。
             - question_hits * 0.25
             + length_bonus
-            + min(filler_hits, 5) * 0.2
-            + min(repeated_hits, 3) * 0.35
+            + min(filler_hits, MAX_FILLER_BONUS_COUNT) * FILLER_BONUS_WEIGHT
+            + min(repeated_hits, MAX_REPEAT_BONUS_COUNT) * REPEAT_BONUS_WEIGHT
         )
 
     def _l2_normalize(vec):
