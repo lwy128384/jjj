@@ -124,6 +124,8 @@ def run_ocr(reader, frame, region, min_conf):
     if crop.size == 0:
         return ""
     try:
+        min_odd_size = 3
+
         def _safe_odd_int(value, default, min_value=3):
             try:
                 n = int(value)
@@ -135,13 +137,13 @@ def run_ocr(reader, frame, region, min_conf):
                 n += 1
             return n
 
-        # relaxed_conf <= min_conf, and still keeps a minimum fallback floor for dense-slide OCR.
+        # relaxed_conf <= min_conf, and maintains a minimum fallback floor for dense-slide OCR.
         relaxed_conf = min(
             min_conf,
             max(OCR_RELAXED_CONFIDENCE_MIN, min_conf * OCR_RELAXED_CONFIDENCE_FACTOR),
         )
-        # Keep paragraph=False to avoid over-merging dense multi-line text on full-slide OCR.
-        results = reader.readtext(crop, detail=1, paragraph=False)
+        # Keep default paragraph grouping first to preserve existing behavior.
+        results = reader.readtext(crop, detail=1, paragraph=True)
         texts = []
         relaxed_texts = []
         for _, t, c in results:
@@ -166,10 +168,14 @@ def run_ocr(reader, frame, region, min_conf):
                 gray_base, None, fx=OCR_UPSCALE_FACTOR, fy=OCR_UPSCALE_FACTOR, interpolation=cv2.INTER_CUBIC
             )
 
-        gaussian_kernel = _safe_odd_int(OCR_GAUSSIAN_KERNEL, default=3, min_value=3)
+        gaussian_kernel = _safe_odd_int(
+            OCR_GAUSSIAN_KERNEL, default=min_odd_size, min_value=min_odd_size
+        )
         gray_work = cv2.GaussianBlur(gray_work, (gaussian_kernel, gaussian_kernel), 0)
 
-        adaptive_block_size = _safe_odd_int(OCR_ADAPTIVE_BLOCK_SIZE, default=31, min_value=3)
+        adaptive_block_size = _safe_odd_int(
+            OCR_ADAPTIVE_BLOCK_SIZE, default=31, min_value=min_odd_size
+        )
         enhanced = cv2.adaptiveThreshold(
             gray_work,
             255,
