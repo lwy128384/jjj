@@ -161,6 +161,7 @@ def run_ocr(reader, frame, region, min_conf):
             if text:
                 return text
 
+        # 回退阈值：在默认配置下从 0.40 放宽到 0.30，同时设置最小下限避免过度放宽。
         fallback_conf = max(
             OCR_FALLBACK_MIN_CONFIDENCE,
             min_conf * OCR_FALLBACK_CONF_MULTIPLIER,
@@ -308,8 +309,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
                         ocr_attempted_in_frame = True
                         if new_text:
                             segment_last_text = new_text
-                            segment_last_time = ts
-                        elif segment_last_text:
+                        if new_text or segment_last_text:
                             segment_last_time = ts
                 else:
                     if not warned_empty_fullscreen_crop:
@@ -325,8 +325,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
                             ocr_attempted_in_frame = True
                             if new_text:
                                 segment_last_text = new_text
-                                segment_last_time = ts
-                            elif segment_last_text:
+                            if new_text or segment_last_text:
                                 segment_last_time = ts
                 if not segment_last_text and not ocr_attempted_in_frame:
                     retry_text = run_ocr(
