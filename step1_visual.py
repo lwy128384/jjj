@@ -40,6 +40,9 @@ try:
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
     OCR_CONFIDENCE_THRESHOLD   = _cfg.OCR_CONFIDENCE_THRESHOLD
+    OCR_FALLBACK_MIN_CONFIDENCE = getattr(_cfg, "OCR_FALLBACK_MIN_CONFIDENCE", 0.20)
+    OCR_ADAPTIVE_BLOCK_SIZE    = getattr(_cfg, "OCR_ADAPTIVE_BLOCK_SIZE", 31)
+    OCR_ADAPTIVE_C             = getattr(_cfg, "OCR_ADAPTIVE_C", 11)
 except ImportError:
     OUTPUT_DIR                 = r"D:\video\output"
     VISUAL_SAMPLE_FPS          = 1
@@ -53,6 +56,9 @@ except ImportError:
     TEACHER_PRESENCE_THRESHOLD = 0.05
     BG_INIT_FRAMES             = 30
     OCR_CONFIDENCE_THRESHOLD   = 0.40
+    OCR_FALLBACK_MIN_CONFIDENCE = 0.20
+    OCR_ADAPTIVE_BLOCK_SIZE    = 31
+    OCR_ADAPTIVE_C             = 11
 
 
 # ============================================================
@@ -139,10 +145,15 @@ def run_ocr(reader, frame, region, min_conf):
     try:
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
         thr = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            OCR_ADAPTIVE_BLOCK_SIZE,
+            OCR_ADAPTIVE_C,
         )
         ocr_inputs = [crop, gray, thr]
-        confs = [min_conf, max(0.20, min_conf * 0.75)]
+        confs = [min_conf, max(OCR_FALLBACK_MIN_CONFIDENCE, min_conf * 0.75)]
 
         for conf in confs:
             for img in ocr_inputs:
