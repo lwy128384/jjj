@@ -114,6 +114,17 @@ DIARIZATION_VOICEPRINT_STUDENT_MARGIN = 0.03
 
 SPEECH_CONFIDENCE_THRESHOLD = 0.60   # 低于此值 → 低置信度
 NO_SPEECH_PROB_THRESHOLD    = 0.50   # 高于此值 → 视为非语音/静默
+STEP2_ENABLE_TEXT_CORRECTION = True
+STEP2_TEXT_CORRECTION_TERMS = [
+    "人工智能", "机器学习", "深度学习", "神经网络", "图灵", "图灵测试",
+    "亚里士多德", "算法", "数据集", "低谷", "模型", "训练", "推理",
+]
+STEP2_TEXT_CORRECTION_MIN_CHARS = 2
+# 拼音归一化编辑距离阈值；默认0.22在常见误识别（如“低谱”→“低谷”）和误改风险间折中
+STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = 0.22
+STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = 1
+STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = 1
+STEP2_TEXT_CORRECTION_CHAR_WEIGHT = 0.05
 
 # ============================================================
 # 步骤3 — 文本语义分析
@@ -124,6 +135,23 @@ MIN_KNOWLEDGE_DURATION  = 45   # 最短知识点时长（秒）
 MAX_KNOWLEDGE_DURATION  = 600  # 最长知识点时长（秒）
 TOP_KEYWORDS            = 5    # 每知识点关键词数
 MIN_TEXT_LENGTH         = 5    # 最短有效文本长度（字符）
+KEYWORD_TITLE_COUNT     = 2    # 用于知识点标题拼接的关键词数量
+KEYWORD_MIN_DOC_FREQ    = 2    # 关键词在有效语音段中的最低文档频次（过滤偶发噪声词）
+KEYWORD_BLACKLIST = [
+    "这个", "那个", "就是", "然后", "所以", "我们", "你们", "他们",
+    "可以", "应该", "需要", "东西", "问题", "内容", "方面", "方法",
+]
+STEP3_DOMAIN_TERMS = [
+    "人工智能", "机器学习", "深度学习", "神经网络", "图灵测试", "亚里士多德",
+]
+STEP3_ENABLE_TEXT_NORMALIZATION = True
+STEP3_TEXT_REPLACE_MAP = {
+    "人工质能": "人工智能",
+    "运遇": "机遇",
+    "亚丽师多德": "亚里士多德",
+    "低谱": "低谷",
+    "图林": "图灵",
+}
 
 # ============================================================
 # 步骤4 — 多模态对齐

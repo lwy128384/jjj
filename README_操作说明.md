@@ -254,6 +254,7 @@ python step2_audio.py --video D:\video\lesson\高数第一章.mp4
 **功能**：
 - ffmpeg 提取 16kHz 单声道 WAV
 - faster-whisper 语音转录（带时间戳）
+- 转录后文本纠错：基于专业词典的拼音模糊匹配（可配置）
 - 说话人二分类（仅“教师/学生”）：融合文本课堂用语特征 + 声学稳定性特征
 - 声纹辅助复判：从已判教师片段提取共同声纹，再回查学生片段并自动纠正
 - 上下文平滑修正孤立误判片段
@@ -272,11 +273,12 @@ python step3_text.py --video D:\video\lesson\高数第一章.mp4
 ```
 
 **功能**：
-- jieba 分词，去停用词
+- 文本归一化（可选 ASR 纠错词典替换）
+- jieba 分词 + 自定义停用词/黑名单过滤
 - TF-IDF 向量化
 - 滑动窗口余弦距离检测语义跳变（知识点边界）
 - 结合幻灯片切换辅助验证
-- 提取关键词，自动命名知识点
+- 按文档频次与权重提取关键词，自动命名知识点
 
 **依赖**：需先完成步骤 2（步骤 1 可选但有助于提升准确率）
 
@@ -508,9 +510,21 @@ venv\Scripts\activate
 | `DIARIZATION_SMOOTH_MAX_DURATION` | 4.0 | 孤立短片段平滑时长上限（秒） | 增大可减少抖动，过大可能过平滑 |
 | `DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD` | 0.82 | 声纹回标阈值 | 降低可更激进地把学生改判为教师 |
 | `DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES` | 2 | 构建教师声纹原型的最少教师片段数 | 样本少时可先用较低值快速启动复判，再按误判情况回调 |
+| `STEP2_ENABLE_TEXT_CORRECTION` | True | 是否启用步骤2文本纠错 | ASR 错别词较多时建议开启 |
+| `STEP2_TEXT_CORRECTION_TERMS` | 见配置 | 专业术语词典 | 建议按学科持续补充 |
+| `STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST` | 0.22 | 拼音归一化编辑距离阈值 | 越小越保守 |
+| `STEP2_TEXT_CORRECTION_MAX_CHAR_DIST` | 1 | 中文字符编辑距离上限 | 越小越保守 |
+| `STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF` | 1 | 术语与候选词长度差上限 | 越小越保守 |
+| `STEP2_TEXT_CORRECTION_CHAR_WEIGHT` | 0.05 | 字符编辑距离在综合评分中的权重 | 增大则更重视字形接近 |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
 | `MIN_KNOWLEDGE_DURATION` | 45 | 最短知识点（秒）| 增大可避免过度切分 |
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |
+| `KEYWORD_TITLE_COUNT` | 2 | 标题拼接关键词数量 | 一般保持 2，过大易冗长 |
+| `KEYWORD_MIN_DOC_FREQ` | 2 | 关键词最小文档频次 | 调大可抑制偶发噪声词 |
+| `KEYWORD_BLACKLIST` | 见配置 | 关键词黑名单 | 可加入口语废词 |
+| `STEP3_DOMAIN_TERMS` | 见配置 | 领域词典 | 加入课程专业术语可提升分词质量 |
+| `STEP3_ENABLE_TEXT_NORMALIZATION` | True | 是否启用文本纠错替换 | ASR 错别词较多时建议开启 |
+| `STEP3_TEXT_REPLACE_MAP` | 见配置 | ASR 常见误识别替换表 | 按课程场景持续补充 |
 | `INTERFERENCE_TEACHER_ABSENT_RATIO` | 0.70 | 教师缺席干扰阈值 | 增大可宽容更多缺席 |
 | `INTERFERENCE_SILENCE_THRESHOLD` | 15 | 连续静默判干扰（秒）| 增大忽略短休息 |
 | `SEGMENT_MIN_DURATION` | 20 | 最短输出片段（秒）| 减小保留短内容 |

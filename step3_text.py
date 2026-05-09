@@ -18,6 +18,7 @@ import os
 import sys
 import json
 import argparse
+import re
 import numpy as np
 from pathlib import Path
 from collections import Counter
@@ -35,6 +36,12 @@ try:
     TOP_KEYWORDS           = _cfg.TOP_KEYWORDS
     MIN_TEXT_LENGTH        = _cfg.MIN_TEXT_LENGTH
     NO_SPEECH_PROB_THRESHOLD = _cfg.NO_SPEECH_PROB_THRESHOLD
+    KEYWORD_TITLE_COUNT    = _cfg.KEYWORD_TITLE_COUNT
+    KEYWORD_MIN_DOC_FREQ   = _cfg.KEYWORD_MIN_DOC_FREQ
+    KEYWORD_BLACKLIST      = set(_cfg.KEYWORD_BLACKLIST)
+    STEP3_DOMAIN_TERMS     = list(_cfg.STEP3_DOMAIN_TERMS)
+    STEP3_ENABLE_TEXT_NORMALIZATION = _cfg.STEP3_ENABLE_TEXT_NORMALIZATION
+    STEP3_TEXT_REPLACE_MAP = dict(_cfg.STEP3_TEXT_REPLACE_MAP)
 except ImportError:
     OUTPUT_DIR             = r"D:\video\output"
     SEMANTIC_WINDOW_SIZE   = 3
@@ -44,6 +51,23 @@ except ImportError:
     TOP_KEYWORDS           = 5
     MIN_TEXT_LENGTH        = 5
     NO_SPEECH_PROB_THRESHOLD = 0.50
+    KEYWORD_TITLE_COUNT    = 2
+    KEYWORD_MIN_DOC_FREQ   = 2
+    KEYWORD_BLACKLIST      = {
+        "这个", "那个", "就是", "然后", "所以", "我们", "你们", "他们",
+        "可以", "应该", "需要", "东西", "问题", "内容", "方面", "方法",
+    }
+    STEP3_DOMAIN_TERMS     = [
+        "人工智能", "机器学习", "深度学习", "神经网络", "图灵测试", "亚里士多德",
+    ]
+    STEP3_ENABLE_TEXT_NORMALIZATION = True
+    STEP3_TEXT_REPLACE_MAP = {
+        "人工质能": "人工智能",
+        "运遇": "机遇",
+        "亚丽师多德": "亚里士多德",
+        "低谱": "低谷",
+        "图林": "图灵",
+    }
 
 KNOWLEDGE_TITLE_PREFIX = "知识点"
 MODEL_PREDICT_EXCEPTIONS = (
@@ -102,31 +126,88 @@ STOP_WORDS = {
 }
 
 
+def normalize_text(text):
+    if not text:
+        return ""
+    out = str(text)
+    if STEP3_ENABLE_TEXT_NORMALIZATION and STEP3_TEXT_REPLACE_MAP:
+        for src in sorted(STEP3_TEXT_REPLACE_MAP, key=len, reverse=True):
+            dst = STEP3_TEXT_REPLACE_MAP[src]
+            if src:
+                out = out.replace(src, dst)
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
 def init_jieba():
     try:
         import jieba
-        import jieba.analyse
         import logging
         logging.getLogger("jieba").setLevel(logging.ERROR)
+        for term in STEP3_DOMAIN_TERMS:
+            if term:
+                jieba.add_word(term)
         return jieba
     except ImportError:
         raise RuntimeError("请安装 jieba:\n  pip install jieba")
 
 
+def is_valid_token(token):
+    if not token:
+        return False
+    if len(token) <= 1:
+        return False
+    if token.isdigit():
+        return False
+    if token in STOP_WORDS or token in KEYWORD_BLACKLIST:
+        return False
+    if re.fullmatch(r"[\W_]+", token):
+        return False
+    return True
+
+
 def tokenize(text, jieba):
-    words = jieba.cut(text)
-    return [w for w in words
-            if len(w) > 1 and w not in STOP_WORDS and not w.isdigit()]
+    norm = normalize_text(text)
+    words = jieba.cut(norm)
+    return [w for w in words if is_valid_token(w)]
 
 
-def extract_keywords(text, jieba, top_n=5):
-    if not text.strip():
+def build_idf_stats(texts, jieba):
+    n = max(len(texts), 1)
+    doc_freq = Counter()
+    for t in texts:
+        toks = set(tokenize(t, jieba))
+        for tok in toks:
+            doc_freq[tok] += 1
+    idf_map = {w: np.log((n + 1) / (df + 1)) + 1.0 for w, df in doc_freq.items()}
+    return idf_map, doc_freq
+
+
+def extract_keywords(text, jieba, top_n=5, idf_map=None, doc_freq=None):
+    norm = normalize_text(text)
+    if not norm:
         return []
-    try:
-        return list(jieba.analyse.extract_tags(text, topK=top_n))
-    except Exception:
-        words = tokenize(text, jieba)
-        return [w for w, _ in Counter(words).most_common(top_n)]
+    words = tokenize(norm, jieba)
+    if not words:
+        return []
+
+    tf = Counter(words)
+    total = len(words)
+    scores = {}
+    for w, c in tf.items():
+        if doc_freq and doc_freq.get(w, 0) < KEYWORD_MIN_DOC_FREQ:
+            continue
+        score = c / total
+        if idf_map:
+            score *= idf_map.get(w, 1.0)
+        scores[w] = score
+
+    if not scores:
+        # 文档频次过滤后为空时回退，避免标题缺失
+        scores = {w: c / total for w, c in tf.items()}
+
+    ranked = sorted(scores.items(), key=lambda x: (-x[1], -len(x[0]), x[0]))
+    return [w for w, _ in ranked[:top_n]]
 
 
 # ============================================================
@@ -271,7 +352,13 @@ def detect_boundaries(segments, jieba, visual_features=None):
     滑动窗口语义边界检测，结合幻灯片切换辅助信号。
     返回知识点段列表。
     """
-    valid = [s for s in segments
+    normalized_segments = []
+    for s in segments:
+        cp = dict(s)
+        cp["text"] = normalize_text(s.get("text", ""))
+        normalized_segments.append(cp)
+
+    valid = [s for s in normalized_segments
              if len(s.get("text", "").strip()) >= MIN_TEXT_LENGTH
              and s.get("no_speech_prob", 1.0) < NO_SPEECH_PROB_THRESHOLD]
 
@@ -279,16 +366,17 @@ def detect_boundaries(segments, jieba, visual_features=None):
         print("  有效语音段不足，整个视频作为一个知识点")
         start = segments[0]["start"] if segments else 0.0
         end   = segments[-1]["end"]  if segments else 0.0
-        kws   = extract_keywords(" ".join(s.get("text","") for s in segments), jieba)
+        kws   = extract_keywords(" ".join(s.get("text", "") for s in normalized_segments), jieba)
         return [{
             "id": 0, "start": start, "end": end,
             "duration": end - start,
-            "title": f"知识点1-{'_'.join(kws[:2])}" if kws else "知识点1",
+            "title": f"知识点1-{'_'.join(kws[:KEYWORD_TITLE_COUNT])}" if kws else "知识点1",
             "keywords": kws, "text_preview": "",
         }]
 
     texts = [s["text"] for s in valid]
     times = [(s["start"], s["end"]) for s in valid]
+    idf_map, doc_freq = build_idf_stats(texts, jieba)
 
     print(f"  TF-IDF 向量化 ({len(texts)} 段)…")
     mat, _ = build_tfidf(texts, jieba)
@@ -340,10 +428,10 @@ def detect_boundaries(segments, jieba, visual_features=None):
         seg_texts = [s["text"] for s in valid
                      if s["start"] >= seg_s and s["end"] <= seg_e]
         combined = " ".join(seg_texts)
-        kws  = extract_keywords(combined, jieba, TOP_KEYWORDS)
+        kws  = extract_keywords(combined, jieba, TOP_KEYWORDS, idf_map=idf_map, doc_freq=doc_freq)
         title = f"知识点{idx+1}"
         if kws:
-            title = f"知识点{idx+1}-{'_'.join(kws[:2])}"
+            title = f"知识点{idx+1}-{'_'.join(kws[:KEYWORD_TITLE_COUNT])}"
 
         knowledge_segs.append({
             "id":           idx,

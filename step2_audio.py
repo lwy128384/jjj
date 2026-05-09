@@ -4,8 +4,9 @@
 步骤2: 语音维度分析
   1. 从视频提取音频（ffmpeg）
   2. 语音转录（faster-whisper，纯 CPU）
-  3. 说话人区分（二分类聚类 + 声纹辅助复判）
-  4. 置信度标记
+  3. 转录文本纠错（专业词典 + 拼音模糊匹配）
+  4. 说话人区分（二分类聚类 + 声纹辅助复判）
+  5. 置信度标记
 
 运行方式:
   python step2_audio.py --video D:/video/lesson/example.mp4
@@ -20,6 +21,7 @@ import json
 import subprocess
 import argparse
 import tempfile
+import re
 import numpy as np
 from pathlib import Path
 
@@ -58,6 +60,13 @@ try:
     DIARIZATION_VOICEPRINT_STUDENT_MARGIN = _cfg.DIARIZATION_VOICEPRINT_STUDENT_MARGIN
     SPEECH_CONFIDENCE_THRESHOLD = _cfg.SPEECH_CONFIDENCE_THRESHOLD
     NO_SPEECH_PROB_THRESHOLD    = _cfg.NO_SPEECH_PROB_THRESHOLD
+    STEP2_ENABLE_TEXT_CORRECTION = _cfg.STEP2_ENABLE_TEXT_CORRECTION
+    STEP2_TEXT_CORRECTION_TERMS = list(_cfg.STEP2_TEXT_CORRECTION_TERMS)
+    STEP2_TEXT_CORRECTION_MIN_CHARS = _cfg.STEP2_TEXT_CORRECTION_MIN_CHARS
+    STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = _cfg.STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST
+    STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = _cfg.STEP2_TEXT_CORRECTION_MAX_CHAR_DIST
+    STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = _cfg.STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF
+    STEP2_TEXT_CORRECTION_CHAR_WEIGHT = _cfg.STEP2_TEXT_CORRECTION_CHAR_WEIGHT
 except ImportError:
     OUTPUT_DIR                  = r"D:\video\output"
     WHISPER_MODEL_SIZE          = "base"
@@ -97,6 +106,16 @@ except ImportError:
     DIARIZATION_VOICEPRINT_STUDENT_MARGIN = 0.03
     SPEECH_CONFIDENCE_THRESHOLD = 0.60
     NO_SPEECH_PROB_THRESHOLD    = 0.50
+    STEP2_ENABLE_TEXT_CORRECTION = True
+    STEP2_TEXT_CORRECTION_TERMS = [
+        "人工智能", "机器学习", "深度学习", "神经网络", "图灵", "图灵测试",
+        "亚里士多德", "算法", "数据集", "低谷", "模型", "训练", "推理",
+    ]
+    STEP2_TEXT_CORRECTION_MIN_CHARS = 2
+    STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = 0.22
+    STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = 1
+    STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = 1
+    STEP2_TEXT_CORRECTION_CHAR_WEIGHT = 0.05
 
 
 # ============================================================
@@ -179,6 +198,154 @@ def transcribe(audio_path):
     print(f"  语言: {info.language}  概率: {info.language_probability:.2f}")
     print(f"  转录片段: {len(segments)} 个")
     return segments, info
+
+
+# ============================================================
+# 转录文本纠错（专业词典 + 拼音模糊匹配）
+# ============================================================
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _is_cjk_token(token):
+    if not token:
+        return False
+    return _CJK_RE.fullmatch(token) is not None
+
+
+def _levenshtein_distance(a, b):
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            ins = cur[j - 1] + 1
+            dele = prev[j] + 1
+            rep = prev[j - 1] + (0 if ca == cb else 1)
+            cur.append(min(ins, dele, rep))
+        prev = cur
+    return prev[-1]
+
+
+def _build_term_index(terms, lazy_pinyin):
+    cleaned = []
+    for t in terms or []:
+        s = str(t).strip()
+        if not s:
+            continue
+        if len(s) < STEP2_TEXT_CORRECTION_MIN_CHARS:
+            continue
+        if not _is_cjk_token(s):
+            continue
+        cleaned.append(s)
+    uniq_terms = sorted(set(cleaned), key=lambda x: (-len(x), x))
+    term_items = []
+    for term in uniq_terms:
+        term_py = " ".join(lazy_pinyin(term, errors="ignore"))
+        if not term_py:
+            continue
+        term_items.append((term, term_py))
+    return term_items
+
+
+def _best_term_match(token, term_items, lazy_pinyin):
+    if not _is_cjk_token(token):
+        return token, None
+    if len(token) < STEP2_TEXT_CORRECTION_MIN_CHARS:
+        return token, None
+    token_py = " ".join(lazy_pinyin(token, errors="ignore"))
+    if not token_py:
+        return token, None
+    token_len = len(token)
+    token_py_len = len(token_py)
+
+    best_term = None
+    best_score = float("inf")
+    best_info = None
+    for term, term_py in term_items:
+        if term == token:
+            return token, None
+        term_len = len(term)
+        if abs(term_len - token_len) > STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF:
+            continue
+        py_dist = _levenshtein_distance(token_py, term_py)
+        py_norm = py_dist / max(token_py_len, len(term_py))
+        if py_norm > STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST:
+            continue
+        char_dist = _levenshtein_distance(token, term)
+        if char_dist > STEP2_TEXT_CORRECTION_MAX_CHAR_DIST:
+            continue
+        score = py_norm + STEP2_TEXT_CORRECTION_CHAR_WEIGHT * char_dist
+        if score < best_score:
+            best_score = score
+            best_term = term
+            best_info = {
+                "original": token,
+                "corrected": term,
+                "pinyin_norm_dist": round(py_norm, 4),
+                "char_dist": int(char_dist),
+            }
+    if best_term is None:
+        return token, None
+    return best_term, best_info
+
+
+def correct_transcription_with_pinyin_fuzzy(segments):
+    if not STEP2_ENABLE_TEXT_CORRECTION:
+        return segments, {"enabled": False, "attempted_segments": 0, "changed_segments": 0, "total_replacements": 0}
+    try:
+        import jieba
+    except ImportError:
+        print("  警告: 缺少 jieba，跳过步骤2文本纠错")
+        return segments, {"enabled": False, "attempted_segments": len(segments), "changed_segments": 0, "total_replacements": 0}
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError:
+        print("  警告: 缺少 pypinyin，跳过步骤2文本纠错")
+        return segments, {"enabled": False, "attempted_segments": len(segments), "changed_segments": 0, "total_replacements": 0}
+
+    term_items = _build_term_index(STEP2_TEXT_CORRECTION_TERMS, lazy_pinyin)
+    if not term_items:
+        return segments, {"enabled": True, "attempted_segments": len(segments), "changed_segments": 0, "total_replacements": 0}
+
+    changed_segments = 0
+    total_replacements = 0
+    for seg in segments:
+        raw_text = str(seg.get("text", ""))
+        if not raw_text.strip():
+            continue
+        tokens = jieba.lcut(raw_text, cut_all=False)
+        if not tokens:
+            continue
+        replacement_logs = []
+        new_tokens = []
+        for token in tokens:
+            corrected, info = _best_term_match(token, term_items, lazy_pinyin)
+            new_tokens.append(corrected)
+            if info:
+                replacement_logs.append(info)
+        new_text = "".join(new_tokens)
+        if replacement_logs and new_text != raw_text:
+            seg["text_raw"] = raw_text
+            seg["text"] = new_text
+            seg["text_correction"] = replacement_logs
+            changed_segments += 1
+            total_replacements += len(replacement_logs)
+
+    print(f"  文本纠错: 命中 {changed_segments} 段 / 替换 {total_replacements} 处")
+    return segments, {
+        "enabled": True,
+        "attempted_segments": len(segments),
+        "changed_segments": changed_segments,
+        "total_replacements": total_replacements,
+    }
 
 
 # ============================================================
@@ -500,6 +667,7 @@ def analyze_video_audio(video_path, output_dir, video_name):
         extract_audio(video_path, wav_path)
 
         segments, info = transcribe(wav_path)
+        segments, correction_stats = correct_transcription_with_pinyin_fuzzy(segments)
 
         valid_segs = [s for s in segments
                       if s["no_speech_prob"] < NO_SPEECH_PROB_THRESHOLD]
@@ -531,6 +699,7 @@ def analyze_video_audio(video_path, output_dir, video_name):
                     sum(s["end"] - s["start"] for s in valid_segs), 2),
                 "avg_confidence":       round(avg_conf, 4),
                 "low_confidence_count": sum(1 for s in segments if s["is_low_confidence"]),
+                "text_correction":      correction_stats,
             },
         }
 
