@@ -34,7 +34,6 @@ try:
     INTERFERENCE_LOW_SPEECH_RATIO     = _cfg.INTERFERENCE_LOW_SPEECH_RATIO
     INTERFERENCE_SILENCE_THRESHOLD    = _cfg.INTERFERENCE_SILENCE_THRESHOLD
     INTERFERENCE_MIN_DURATION         = _cfg.INTERFERENCE_MIN_DURATION
-    SEGMENT_MERGE_GAP                 = _cfg.SEGMENT_MERGE_GAP
     SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
     SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
 except ImportError:
@@ -43,7 +42,6 @@ except ImportError:
     INTERFERENCE_LOW_SPEECH_RATIO     = 0.80
     INTERFERENCE_SILENCE_THRESHOLD    = 15.0
     INTERFERENCE_MIN_DURATION         = 5.0
-    SEGMENT_MERGE_GAP                 = 5.0
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
 
@@ -233,7 +231,7 @@ def detect_interference(multimodal_index, model_times=None):
 # ============================================================
 
 def build_edit_commands(know_segs, interferences, duration):
-    """过滤干扰、合并短间隔、添加缓冲，输出剪辑片段列表"""
+    """过滤干扰、添加缓冲，按知识点输出剪辑片段列表（不做片段合并）"""
 
     def overlaps_interference(start, end):
         for intf in interferences:
@@ -260,23 +258,11 @@ def build_edit_commands(know_segs, interferences, duration):
             "keywords":    ks.get("keywords", []),
         })
 
-    # 合并间隔过短的相邻段
-    merged = []
-    for seg in valid:
-        if merged and seg["start"] - merged[-1]["end"] < SEGMENT_MERGE_GAP:
-            prev = merged[-1]
-            prev["end"]      = seg["end"]
-            prev["duration"] = prev["end"] - prev["start"]
-            prev["title"]    = prev["title"] + "+" + seg["title"]
-            prev["keywords"] = list(dict.fromkeys(prev["keywords"] + seg["keywords"]))
-        else:
-            merged.append(dict(seg))  # 拷贝
-
-    # 重新编号
-    for i, seg in enumerate(merged):
+    # 重新编号（保持每个知识点一个片段）
+    for i, seg in enumerate(valid):
         seg["id"] = i
 
-    return merged
+    return valid
 
 
 # ============================================================
