@@ -73,7 +73,6 @@ except ImportError:
         "图林": "图灵",
     }
 
-KNOWLEDGE_TITLE_PREFIX = "知识点"
 MODEL_PREDICT_EXCEPTIONS = (
     FileNotFoundError,
     OSError,
@@ -186,6 +185,14 @@ def tokenize(text, jieba):
     norm = normalize_text(text)
     words = jieba.cut(norm)
     return [w for w in words if is_valid_token(w)]
+
+
+def build_knowledge_title(keywords, idx):
+    """知识点命名：优先关键词，不再添加“知识点N-”前缀。"""
+    kws = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+    if kws:
+        return "_".join(kws[:KEYWORD_TITLE_COUNT])
+    return f"片段{idx+1}"
 
 
 def build_idf_stats(texts, jieba):
@@ -325,7 +332,7 @@ def try_refine_boundaries_with_model(filtered, valid, visual_features):
 
     pseudo_text = {
         "knowledge_segments": [
-            {"id": i, "start": s, "end": e, "title": f"{KNOWLEDGE_TITLE_PREFIX} {i+1}"}
+            {"id": i, "start": s, "end": e, "title": build_knowledge_title([], i)}
             for i, (s, e) in enumerate(zip(filtered[:-1], filtered[1:]))
         ],
         "boundaries": filtered,
@@ -384,7 +391,7 @@ def detect_boundaries(segments, jieba, visual_features=None):
         return [{
             "id": 0, "start": start, "end": end,
             "duration": end - start,
-            "title": f"知识点1-{'_'.join(kws[:KEYWORD_TITLE_COUNT])}" if kws else "知识点1",
+            "title": build_knowledge_title(kws, 0),
             "keywords": kws, "text_preview": "",
         }]
 
@@ -443,9 +450,7 @@ def detect_boundaries(segments, jieba, visual_features=None):
                      if s["start"] >= seg_s and s["end"] <= seg_e]
         combined = " ".join(seg_texts)
         kws  = extract_keywords(combined, jieba, TOP_KEYWORDS, idf_map=idf_map, doc_freq=doc_freq)
-        title = f"知识点{idx+1}"
-        if kws:
-            title = f"知识点{idx+1}-{'_'.join(kws[:KEYWORD_TITLE_COUNT])}"
+        title = build_knowledge_title(kws, idx)
 
         knowledge_segs.append({
             "id":           idx,

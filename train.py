@@ -31,6 +31,7 @@ import json
 import argparse
 import traceback
 import glob
+import re
 import numpy as np
 from pathlib import Path
 
@@ -46,6 +47,13 @@ try:
     TRAIN_TEST_SPLIT = _cfg.TRAIN_TEST_SPLIT
     RANDOM_STATE     = _cfg.RANDOM_STATE
     TIME_RESOLUTION  = _cfg.TIME_RESOLUTION
+    BOUNDARY_POSITIVE_WEIGHT_MULTIPLIER = _cfg.BOUNDARY_POSITIVE_WEIGHT_MULTIPLIER
+    INTERFERENCE_POSITIVE_WEIGHT_MULTIPLIER = _cfg.INTERFERENCE_POSITIVE_WEIGHT_MULTIPLIER
+    INTERFERENCE_NEG_POS_RATIO = _cfg.INTERFERENCE_NEG_POS_RATIO
+    BOUNDARY_MODEL_BASE_THRESHOLD = _cfg.BOUNDARY_MODEL_BASE_THRESHOLD
+    INTERFERENCE_MODEL_THRESHOLD = _cfg.INTERFERENCE_MODEL_THRESHOLD
+    BOUNDARY_POST_MIN_GAP = _cfg.BOUNDARY_POST_MIN_GAP
+    BOUNDARY_POST_MAX_GAP = _cfg.BOUNDARY_POST_MAX_GAP
 except ImportError:
     LESSON_DIR       = r"D:\video\lesson"
     OUTPUT_DIR       = r"D:\video\output"
@@ -54,6 +62,13 @@ except ImportError:
     TRAIN_TEST_SPLIT = 0.20
     RANDOM_STATE     = 42
     TIME_RESOLUTION  = 1.0
+    BOUNDARY_POSITIVE_WEIGHT_MULTIPLIER = 3.0
+    INTERFERENCE_POSITIVE_WEIGHT_MULTIPLIER = 3.0
+    INTERFERENCE_NEG_POS_RATIO = 3
+    BOUNDARY_MODEL_BASE_THRESHOLD = 0.50
+    INTERFERENCE_MODEL_THRESHOLD = 0.50
+    BOUNDARY_POST_MIN_GAP = 30.0
+    BOUNDARY_POST_MAX_GAP = 300.0
 
 
 # ============================================================
@@ -76,6 +91,71 @@ def save_json(data, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _safe_float(v, default=0.0):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        if default is None:
+            return None
+        return float(default)
+
+
+def _merge_intervals(intervals):
+    valid = []
+    for s, e in intervals:
+        s = _safe_float(s, 0.0)
+        e = _safe_float(e, 0.0)
+        if e < s:
+            s, e = e, s
+        if e - s <= 1e-6:
+            continue
+        valid.append((round(s, 2), round(e, 2)))
+    if not valid:
+        return []
+    valid.sort(key=lambda x: (x[0], x[1]))
+    merged = [list(valid[0])]
+    for s, e in valid[1:]:
+        if s <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    return [(s, e) for s, e in merged]
+
+
+def _in_any_interval(t, intervals):
+    for s, e in intervals:
+        if s <= t <= e:
+            return True
+    return False
+
+
+def normalize_annotations(annotations):
+    """
+    统一标注结构，兼容“仅知识点标注”场景：
+    - 只标知识点：其余时间自动视为干扰候选
+    - 显式标注 is_interference 时优先保留
+    """
+    normalized = []
+    for ann in annotations or []:
+        s = _safe_float(ann.get("start"), None)
+        e = _safe_float(ann.get("end"), None)
+        if s is None or e is None:
+            continue
+        if e < s:
+            s, e = e, s
+        if e - s <= 1e-6:
+            continue
+        is_intf = bool(ann.get("is_interference", False))
+        title = str(ann.get("title", "") or "").strip()
+        normalized.append({
+            "start": round(s, 2),
+            "end": round(e, 2),
+            "title": title,
+            "is_interference": is_intf,
+        })
+    return normalized
 
 
 # ============================================================
@@ -105,10 +185,27 @@ def extract_features_from_index(multimodal_index, window_sec=10):
     n      = len(series)
     W      = window_sec
 
-    feats  = []
+    def _tokenize_for_jaccard(text):
+        if not text:
+            return set()
+        txt = str(text).lower().strip()
+        parts = re.findall(r"[\u4e00-\u9fff]|[a-z0-9_]+", txt)
+        return set(parts)
+
+    def _jaccard_similarity(a, b):
+        ta = _tokenize_for_jaccard(a)
+        tb = _tokenize_for_jaccard(b)
+        if not ta and not tb:
+            return 1.0
+        inter = len(ta & tb)
+        union = max(len(ta | tb), 1)
+        return inter / union
+
+    feats = []
     for i, pt in enumerate(series):
         # 滚动窗口统计
         win = series[max(0, i-W):i+1]
+        win_future = series[i:min(n, i+W+1)]
         roll_sil  = sum(1 for p in win if p["is_silence"])   / max(len(win), 1)
         roll_tchr = sum(1 for p in win if p["teacher_present"]) / max(len(win), 1)
 
@@ -116,6 +213,19 @@ def extract_features_from_index(multimodal_index, window_sec=10):
         prev = series[i-1] if i > 0 else pt
         # 幻灯片跳变
         slide_delta = int(pt["slide_idx"] != prev.get("slide_idx", 0))
+
+        text_now = (pt.get("speech_text", "") or "") + " " + (pt.get("ppt_text", "") or "")
+        text_prev = (prev.get("speech_text", "") or "") + " " + (prev.get("ppt_text", "") or "")
+        text_sim = _jaccard_similarity(text_now, text_prev)
+
+        dur_now = max(_safe_float(pt.get("duration", TIME_RESOLUTION), TIME_RESOLUTION), 1e-3)
+        dur_prev = max(_safe_float(prev.get("duration", TIME_RESOLUTION), TIME_RESOLUTION), 1e-3)
+        speech_rate_now = len(pt.get("speech_text", "") or "") / dur_now
+        speech_rate_prev = len(prev.get("speech_text", "") or "") / dur_prev
+        rate_change = abs(speech_rate_now - speech_rate_prev)
+
+        speaker_change = int((pt.get("speaker", "") or "") != (prev.get("speaker", "") or ""))
+        roll_sil_future = sum(1 for p in win_future if p["is_silence"]) / max(len(win_future), 1)
 
         f = [
             int(pt["teacher_present"]),
@@ -128,6 +238,10 @@ def extract_features_from_index(multimodal_index, window_sec=10):
             slide_delta,
             roll_sil,
             roll_tchr,
+            text_sim,
+            rate_change,
+            speaker_change,
+            roll_sil_future,
         ]
         feats.append(f)
 
@@ -147,16 +261,36 @@ def label_from_annotation(series, annotations, tolerance_sec=3.0):
     bound_label  = np.zeros(n, dtype=np.int32)
     interf_label = np.zeros(n, dtype=np.int32)
 
-    for ann in annotations:
-        # 边界：起点附近
+    normalized = normalize_annotations(annotations)
+    knowledge_ranges = _merge_intervals(
+        [(a["start"], a["end"]) for a in normalized if not a["is_interference"]]
+    )
+    explicit_interference_ranges = _merge_intervals(
+        [(a["start"], a["end"]) for a in normalized if a["is_interference"]]
+    )
+
+    # 边界：知识点片段起止点（兼容只标知识点）
+    boundary_points = []
+    for ann in normalized:
+        if ann["is_interference"]:
+            continue
+        boundary_points.extend([ann["start"], ann["end"]])
+    boundary_points = sorted(set(round(t, 2) for t in boundary_points))
+
+    for b_t in boundary_points:
         for i, t in enumerate(times):
-            if abs(t - ann["start"]) <= tolerance_sec:
+            if abs(t - b_t) <= tolerance_sec:
                 bound_label[i] = 1
-        # 干扰段内的点
-        if ann.get("is_interference", False):
-            for i, t in enumerate(times):
-                if ann["start"] <= t <= ann["end"]:
-                    interf_label[i] = 1
+
+    # 干扰标签：
+    # 1) 显式标注 is_interference=true 的区间
+    # 2) 若存在知识点标注，则知识点外时间自动视为干扰（补集）
+    for i, t in enumerate(times):
+        is_explicit_interference = _in_any_interval(t, explicit_interference_ranges)
+        is_in_knowledge = _in_any_interval(t, knowledge_ranges)
+        inferred_interference = bool(knowledge_ranges) and (not is_in_knowledge)
+        if is_explicit_interference or inferred_interference:
+            interf_label[i] = 1
 
     return bound_label, interf_label
 
@@ -164,6 +298,21 @@ def label_from_annotation(series, annotations, tolerance_sec=3.0):
 # ============================================================
 # 模型训练
 # ============================================================
+
+def balance_dataset(X, y, neg_pos_ratio=3):
+    """下采样负样本，缓解极端类别不平衡。"""
+    pos_idx = np.where(y == 1)[0]
+    neg_idx = np.where(y == 0)[0]
+    if len(pos_idx) == 0 or len(neg_idx) == 0:
+        return X, y
+
+    n_pos = len(pos_idx)
+    n_neg = min(len(neg_idx), n_pos * max(int(neg_pos_ratio), 1))
+    sampled_neg = np.random.RandomState(RANDOM_STATE).choice(neg_idx, n_neg, replace=False)
+    all_idx = np.concatenate([pos_idx, sampled_neg])
+    np.random.RandomState(RANDOM_STATE).shuffle(all_idx)
+    return X[all_idx], y[all_idx]
+
 
 def train_model(X, y, model_type="boundary"):
     """
@@ -175,13 +324,28 @@ def train_model(X, y, model_type="boundary"):
         from sklearn.model_selection import train_test_split
         from sklearn.metrics import classification_report, f1_score
         from sklearn.preprocessing import StandardScaler
+        from sklearn.utils.class_weight import compute_class_weight
     except ImportError:
         raise RuntimeError("请安装 scikit-learn:\n  pip install scikit-learn")
 
-    # 类别不平衡处理：用 class_weight
+    if model_type == "interference":
+        X, y = balance_dataset(X, y, neg_pos_ratio=INTERFERENCE_NEG_POS_RATIO)
+
+    classes = np.unique(y)
+    if len(classes) < 2:
+        raise RuntimeError(f"{model_type} 训练集仅含单一类别，无法训练分类器")
+
+    class_weight_values = compute_class_weight(class_weight="balanced", classes=classes, y=y)
+    class_weights = {int(c): float(w) for c, w in zip(classes, class_weight_values)}
+    if 1 in class_weights:
+        if model_type == "boundary":
+            class_weights[1] *= float(BOUNDARY_POSITIVE_WEIGHT_MULTIPLIER)
+        else:
+            class_weights[1] *= float(INTERFERENCE_POSITIVE_WEIGHT_MULTIPLIER)
+
+    stratify_y = y if len(classes) > 1 and min(np.bincount(y.astype(int))) >= 2 else None
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TRAIN_TEST_SPLIT, random_state=RANDOM_STATE, stratify=y
-        if y.sum() > 1 else None
+        X, y, test_size=TRAIN_TEST_SPLIT, random_state=RANDOM_STATE, stratify=stratify_y
     )
 
     scaler = StandardScaler()
@@ -191,7 +355,7 @@ def train_model(X, y, model_type="boundary"):
     clf = RandomForestClassifier(
         n_estimators  = 200,
         max_depth     = 8,
-        class_weight  = "balanced",
+        class_weight  = class_weights,
         random_state  = RANDOM_STATE,
         n_jobs        = -1,       # 多核 CPU
     )
@@ -204,6 +368,7 @@ def train_model(X, y, model_type="boundary"):
     print(f"\n  [{model_type} 模型] 评估报告:")
     print(report)
     print(f"  加权 F1: {f1:.4f}")
+    print(f"  类别权重: {class_weights}")
 
     return clf, scaler, {"f1": round(f1, 4), "report": report}
 
@@ -314,9 +479,38 @@ def predict_boundaries(mindex):
         clf, scaler = load_model("boundary")
         X = extract_features_from_index(mindex)
         X_s = scaler.transform(X)
-        preds = clf.predict(X_s)
         times = [pt["time"] for pt in mindex["time_series"]]
-        return [t for t, p in zip(times, preds) if p == 1]
+        rule_times = [
+            t for t, pt in zip(times, mindex["time_series"])
+            if bool(pt.get("is_knowledge_boundary", False))
+        ]
+
+        slide_ratio = sum(1 for p in mindex["time_series"] if p.get("is_slide_transition")) / max(len(times), 1)
+        silence_ratio = sum(1 for p in mindex["time_series"] if p.get("is_silence")) / max(len(times), 1)
+        threshold = float(BOUNDARY_MODEL_BASE_THRESHOLD)
+        if slide_ratio >= 0.04:
+            threshold += 0.05
+        if silence_ratio >= 0.30:
+            threshold += 0.03
+        if slide_ratio <= 0.01 and silence_ratio <= 0.15:
+            threshold -= 0.05
+        threshold = min(max(threshold, 0.35), 0.75)
+
+        if hasattr(clf, "predict_proba"):
+            proba = clf.predict_proba(X_s)
+            pos_proba = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
+            model_times = [t for t, p in zip(times, pos_proba) if float(p) >= threshold]
+        else:
+            preds = clf.predict(X_s)
+            model_times = [t for t, p in zip(times, preds) if p == 1]
+
+        merged_times = sorted(set([round(float(t), 2) for t in (model_times + rule_times)]))
+        return post_process_boundaries(
+            merged_times,
+            mindex["time_series"],
+            min_gap=BOUNDARY_POST_MIN_GAP,
+            max_gap=BOUNDARY_POST_MAX_GAP,
+        )
     except Exception:
         return []
 
@@ -327,11 +521,72 @@ def predict_interference(mindex):
         clf, scaler = load_model("interference")
         X   = extract_features_from_index(mindex)
         X_s = scaler.transform(X)
-        preds = clf.predict(X_s)
         times = [pt["time"] for pt in mindex["time_series"]]
+        if hasattr(clf, "predict_proba"):
+            proba = clf.predict_proba(X_s)
+            pos_proba = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
+            return [t for t, p in zip(times, pos_proba) if float(p) >= float(INTERFERENCE_MODEL_THRESHOLD)]
+        preds = clf.predict(X_s)
         return [t for t, p in zip(times, preds) if p == 1]
     except Exception:
         return []
+
+
+def _boundary_score(pt):
+    score = 0.0
+    if pt.get("is_silence"):
+        score += 1.5
+    if pt.get("is_slide_transition"):
+        score += 1.0
+    score += max(0.0, 1.0 - float(pt.get("speech_confidence", 0.0))) * 0.5
+    return score
+
+
+def find_best_split(series, left_t, right_t):
+    pts = [p for p in series if left_t <= p.get("time", 0.0) <= right_t]
+    if not pts:
+        return round((left_t + right_t) / 2.0, 2)
+    best = max(pts, key=_boundary_score)
+    return round(float(best.get("time", (left_t + right_t) / 2.0)), 2)
+
+
+def post_process_boundaries(predicted_times, series, min_gap=30, max_gap=300):
+    """
+    后处理边界：
+    - 合并过近边界
+    - 大间隔补点
+    - 倾向保留静默/翻页附近边界
+    """
+    if not predicted_times:
+        return []
+    times = sorted(set(round(float(t), 2) for t in predicted_times))
+    if len(times) <= 1:
+        return times
+
+    point_by_time = {round(float(p.get("time", -1)), 2): p for p in series}
+
+    merged = [times[0]]
+    for t in times[1:]:
+        if t - merged[-1] >= float(min_gap):
+            merged.append(t)
+            continue
+        prev_pt = point_by_time.get(merged[-1], {"time": merged[-1]})
+        cur_pt = point_by_time.get(t, {"time": t})
+        if _boundary_score(cur_pt) > _boundary_score(prev_pt):
+            merged[-1] = t
+
+    final = [merged[0]]
+    for t in merged[1:]:
+        while t - final[-1] > float(max_gap):
+            split = find_best_split(series, final[-1], t)
+            if split - final[-1] < float(min_gap):
+                split = round(final[-1] + float(min_gap), 2)
+            if t - split < float(min_gap):
+                break
+            final.append(split)
+        final.append(t)
+
+    return sorted(set(round(x, 2) for x in final))
 
 
 # ============================================================
