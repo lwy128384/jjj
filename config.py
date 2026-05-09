@@ -166,7 +166,6 @@ INTERFERENCE_LOW_SPEECH_RATIO     = 0.80  # 静默/低音比例 > 此值 → 干
 INTERFERENCE_SILENCE_THRESHOLD    = 15.0  # 连续静默 > 此值（秒） → 干扰
 INTERFERENCE_MIN_DURATION         = 5.0   # 最短干扰持续时长（秒）
 
-SEGMENT_MERGE_GAP    = 5.0    # 间隔 < 此值的相邻段合并（秒）
 SEGMENT_MIN_DURATION = 20.0   # 最短保留片段（秒）
 SEGMENT_PADDING      = 1.0    # 片段首尾缓冲（秒）
 
