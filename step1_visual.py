@@ -30,7 +30,6 @@ try:
     OUTPUT_DIR                 = _cfg.OUTPUT_DIR
     VISUAL_SAMPLE_FPS          = _cfg.VISUAL_SAMPLE_FPS
     PODIUM_REGION              = _cfg.PODIUM_REGION
-    PPT_REGION                 = _cfg.PPT_REGION
     PPT_REGION_FULLSCREEN      = getattr(_cfg, "PPT_REGION_FULLSCREEN", (0.00, 0.00, 1.00, 0.90))
     FULLSCREEN_BRIGHT_RATIO    = getattr(_cfg, "FULLSCREEN_BRIGHT_RATIO", 0.35)
     FULLSCREEN_LOW_SAT_RATIO   = getattr(_cfg, "FULLSCREEN_LOW_SAT_RATIO", 0.45)
