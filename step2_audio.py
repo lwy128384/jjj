@@ -43,6 +43,8 @@ try:
     DIARIZATION_SMOOTH_WINDOW   = _cfg.DIARIZATION_SMOOTH_WINDOW
     DIARIZATION_SMOOTH_MAX_DURATION = _cfg.DIARIZATION_SMOOTH_MAX_DURATION
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = _cfg.DIARIZATION_SMOOTH_MIN_NEIGHBORS
+    DIARIZATION_TEACHER_PROB_SIGMOID_SCALE = _cfg.DIARIZATION_TEACHER_PROB_SIGMOID_SCALE
+    DIARIZATION_TEACHER_PROB_BIAS = _cfg.DIARIZATION_TEACHER_PROB_BIAS
     DIARIZATION_TEACHER_PROB_THRESHOLD = _cfg.DIARIZATION_TEACHER_PROB_THRESHOLD
     DIARIZATION_VOICEPRINT_BORDERLINE_LOW = _cfg.DIARIZATION_VOICEPRINT_BORDERLINE_LOW
     DIARIZATION_VOICEPRINT_BORDERLINE_HIGH = _cfg.DIARIZATION_VOICEPRINT_BORDERLINE_HIGH
@@ -78,7 +80,9 @@ except ImportError:
     DIARIZATION_SMOOTH_WINDOW   = 3
     DIARIZATION_SMOOTH_MAX_DURATION = 4.0
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = 2
-    DIARIZATION_TEACHER_PROB_THRESHOLD = 0.50
+    DIARIZATION_TEACHER_PROB_SIGMOID_SCALE = 1.0
+    DIARIZATION_TEACHER_PROB_BIAS = 0.30
+    DIARIZATION_TEACHER_PROB_THRESHOLD = 0.38
     DIARIZATION_VOICEPRINT_BORDERLINE_LOW = 0.30
     DIARIZATION_VOICEPRINT_BORDERLINE_HIGH = 0.70
     DIARIZATION_VOICEPRINT_ASSIST_ENABLED = True
@@ -211,11 +215,16 @@ def diarize_speakers(audio_path, segments):
         arr = np.asarray(arr, dtype=float)
         if len(arr) == 0:
             return arr
-        lo = float(np.min(arr))
-        hi = float(np.max(arr))
-        if hi - lo < 1e-8:
+        center = float(np.median(arr))
+        mad = float(np.median(np.abs(arr - center)))
+        std = float(np.std(arr))
+        spread = mad if mad > 1e-6 else std
+        if spread < 1e-6:
             return np.full_like(arr, 0.5, dtype=float)
-        return (arr - lo) / (hi - lo)
+        scale = float(max(DIARIZATION_TEACHER_PROB_SIGMOID_SCALE, 1e-6))
+        logit = ((arr - center) / spread) * scale + float(DIARIZATION_TEACHER_PROB_BIAS)
+        logit = np.clip(logit, -20.0, 20.0)
+        return 1.0 / (1.0 + np.exp(-logit))
 
     def _text_teacher_score(text):
         LENGTH_NORM_FACTOR = 35.0
