@@ -110,7 +110,7 @@ DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD = 0.82
 DIARIZATION_VOICEPRINT_STUDENT_MARGIN = 0.03
 
 SPEECH_CONFIDENCE_THRESHOLD = 0.60   # 低于此值 → 低置信度
-NO_SPEECH_PROB_THRESHOLD    = 0.80   # 高于此值 → 倾向判为非语音/静默（可被文本规则覆盖）
+NO_SPEECH_PROB_THRESHOLD    = 0.80   # 高于此值 → 倾向判为非语音/静默 (可被文本规则覆盖)
 NO_SPEECH_IGNORE_WITH_TEXT  = True   # 有文本时智能忽略 no_speech_prob
 NO_SPEECH_TEXT_SHORT_LEN    = 3      # 高 no_speech_prob + 极短文本（<=）仍按噪音过滤
 STEP2_ENABLE_TEXT_CORRECTION = True

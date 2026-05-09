@@ -144,15 +144,15 @@ def normalize_text(text):
 
 
 def _is_semantic_valid_segment(seg):
-    text = normalize_text(seg.get("text", ""))
-    if len(text) < MIN_TEXT_LENGTH:
+    normalized_text = normalize_text(seg.get("text", ""))
+    if len(normalized_text) < MIN_TEXT_LENGTH:
         return False
     no_sp = float(seg.get("no_speech_prob", 1.0) or 1.0)
     if no_sp <= NO_SPEECH_PROB_THRESHOLD:
         return True
-    if not (NO_SPEECH_IGNORE_WITH_TEXT and text):
+    if not (NO_SPEECH_IGNORE_WITH_TEXT and normalized_text):
         return False
-    return len(text) > NO_SPEECH_TEXT_SHORT_LEN
+    return len(normalized_text) > NO_SPEECH_TEXT_SHORT_LEN
 
 
 def init_jieba():

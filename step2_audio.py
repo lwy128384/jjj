@@ -208,7 +208,7 @@ def _should_keep_speech_segment(seg):
     no_sp = float(seg.get("no_speech_prob", 1.0) or 1.0)
     if no_sp <= NO_SPEECH_PROB_THRESHOLD:
         return True
-    text = str(seg.get("text", "") or "").strip()
+    text = str(seg.get("text", "")).strip()
     if not (NO_SPEECH_IGNORE_WITH_TEXT and text):
         return False
     return len(text) > NO_SPEECH_TEXT_SHORT_LEN
