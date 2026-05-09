@@ -179,7 +179,7 @@ def build_idf_stats(texts, jieba):
         toks = set(tokenize(t, jieba))
         for tok in toks:
             doc_freq[tok] += 1
-    idf_map = {w: float(np.log((n + 1) / (df + 1)) + 1.0) for w, df in doc_freq.items()}
+    idf_map = {w: np.log((n + 1) / (df + 1)) + 1.0 for w, df in doc_freq.items()}
     return idf_map, doc_freq
 
 
@@ -203,7 +203,7 @@ def extract_keywords(text, jieba, top_n=5, idf_map=None, doc_freq=None):
         scores[w] = score
 
     if not scores:
-        # 文档频次过滤后为空时回退，避免标题空缺
+        # 文档频次过滤后为空时回退，避免标题缺失
         scores = {w: c / total for w, c in tf.items()}
 
     ranked = sorted(scores.items(), key=lambda x: (-x[1], -len(x[0]), x[0]))
