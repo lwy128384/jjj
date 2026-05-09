@@ -36,6 +36,10 @@ try:
     FULLSCREEN_EDGE_RATIO      = getattr(_cfg, "FULLSCREEN_EDGE_RATIO", 0.005)
     SLIDE_CHANGE_THRESHOLD     = _cfg.SLIDE_CHANGE_THRESHOLD
     TEACHER_PRESENCE_THRESHOLD = _cfg.TEACHER_PRESENCE_THRESHOLD
+    TEACHER_STATIC_COMPENSATION_ENABLED = getattr(_cfg, "TEACHER_STATIC_COMPENSATION_ENABLED", True)
+    TEACHER_STATIC_DETECT_INTERVAL = max(1, int(getattr(_cfg, "TEACHER_STATIC_DETECT_INTERVAL", 2)))
+    TEACHER_STATIC_MIN_WEIGHT = float(getattr(_cfg, "TEACHER_STATIC_MIN_WEIGHT", 0.20))
+    TEACHER_STATIC_MIN_AREA_RATIO = float(getattr(_cfg, "TEACHER_STATIC_MIN_AREA_RATIO", 0.015))
     BG_INIT_FRAMES             = _cfg.BG_INIT_FRAMES
     OCR_CONFIDENCE_THRESHOLD   = _cfg.OCR_CONFIDENCE_THRESHOLD
     OCR_RELAXED_CONFIDENCE_MIN = getattr(_cfg, "OCR_RELAXED_CONFIDENCE_MIN", 0.08)
@@ -55,7 +59,11 @@ except ImportError:
     FULLSCREEN_LOW_SAT_RATIO   = 0.45
     FULLSCREEN_EDGE_RATIO      = 0.005
     SLIDE_CHANGE_THRESHOLD     = 0.70
-    TEACHER_PRESENCE_THRESHOLD = 0.05
+    TEACHER_PRESENCE_THRESHOLD = 0.02
+    TEACHER_STATIC_COMPENSATION_ENABLED = True
+    TEACHER_STATIC_DETECT_INTERVAL = 2
+    TEACHER_STATIC_MIN_WEIGHT = 0.20
+    TEACHER_STATIC_MIN_AREA_RATIO = 0.015
     BG_INIT_FRAMES             = 30
     OCR_CONFIDENCE_THRESHOLD   = 0.15
     OCR_RELAXED_CONFIDENCE_MIN = 0.08
@@ -200,6 +208,31 @@ def is_fullscreen_ppt(frame):
         edge_ratio > FULLSCREEN_EDGE_RATIO
     )
 
+
+def detect_person_in_podium(hog_detector, podium_crop):
+    """静止补偿：在讲台区域做人形检测，命中则判定教师在场。"""
+    if podium_crop is None or podium_crop.size == 0:
+        return False
+    h, w = podium_crop.shape[:2]
+    if h < 64 or w < 64:
+        return False
+
+    rects, weights = hog_detector.detectMultiScale(
+        podium_crop,
+        winStride=(8, 8),
+        padding=(8, 8),
+        scale=1.05,
+    )
+    if len(rects) == 0:
+        return False
+
+    region_area = float(h * w)
+    for (x, y, rw, rh), weight in zip(rects, weights):
+        area_ratio = (rw * rh) / (region_area + 1e-8)
+        if float(weight) >= TEACHER_STATIC_MIN_WEIGHT and area_ratio >= TEACHER_STATIC_MIN_AREA_RATIO:
+            return True
+    return False
+
 # ============================================================
 # 核心分析
 # ============================================================
@@ -228,6 +261,8 @@ def analyze_video_visual(video_path, output_dir, video_name):
         varThreshold   = 50,
         detectShadows  = False,
     )
+    hog_detector = cv2.HOGDescriptor()
+    hog_detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
     # OCR
     ocr_reader = init_ocr()
@@ -246,6 +281,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
     segment_last_text          = ""
     segment_last_time          = None
     segment_last_ssim          = None
+    static_person_last = None
 
     # 预热背景模型
     print(f"  预热背景模型（{BG_INIT_FRAMES} 帧）…")
@@ -272,12 +308,21 @@ def analyze_video_visual(video_path, output_dir, video_name):
             fg_mask     = cv2.morphologyEx(fg_mask, cv2.MORPH_DILATE, kernel)
             fg_ratio    = float(np.sum(fg_mask > 127)) / (fg_mask.size + 1e-8)
             fullscreen_ppt = is_fullscreen_ppt(frame)
-            in_podium   = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD or fullscreen_ppt)
+            motion_present = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD)
+            static_person_present = False
+            if (not motion_present) and (not fullscreen_ppt) and TEACHER_STATIC_COMPENSATION_ENABLED:
+                if static_person_last is None or idx % TEACHER_STATIC_DETECT_INTERVAL == 0:
+                    static_person_last = detect_person_in_podium(hog_detector, podium_crop)
+                static_person_present = static_person_last
+            else:
+                static_person_last = None
+            in_podium   = bool(motion_present or static_person_present or fullscreen_ppt)
 
             teacher_timeline.append({
                 "time":        ts,
                 "in_podium":   in_podium,
                 "motion_ratio": round(fg_ratio, 4),
+                "static_person_detected": static_person_present,
                 "full_screen_ppt": fullscreen_ppt,
             })
 
