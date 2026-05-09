@@ -302,8 +302,14 @@ def diarize_speakers(audio_path, segments):
             return 0
         if len(teacher_probs) != len(valid_indices):
             return 0
-        if DIARIZATION_VOICEPRINT_BORDERLINE_LOW > DIARIZATION_VOICEPRINT_BORDERLINE_HIGH:
-            return 0
+        low = float(DIARIZATION_VOICEPRINT_BORDERLINE_LOW)
+        high = float(DIARIZATION_VOICEPRINT_BORDERLINE_HIGH)
+        if low > high:
+            print(
+                "  警告: DIARIZATION_VOICEPRINT_BORDERLINE_LOW 大于 HIGH，"
+                "已自动交换边界值。"
+            )
+            low, high = high, low
 
         idx2vp = {vi: _l2_normalize(vp) for vi, vp in zip(valid_indices, voiceprints)}
         idx2prob = {vi: float(tp) for vi, tp in zip(valid_indices, teacher_probs)}
@@ -311,7 +317,7 @@ def diarize_speakers(audio_path, segments):
             idx2vp[vi]
             for vi in valid_indices
             if segs[vi].get("speaker") == "教师"
-            and idx2prob.get(vi, 0.0) >= DIARIZATION_VOICEPRINT_BORDERLINE_HIGH
+            and idx2prob.get(vi, 0.0) >= high
         ]
         if len(teacher_vecs) < DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES:
             return 0
@@ -321,7 +327,7 @@ def diarize_speakers(audio_path, segments):
             idx2vp[vi]
             for vi in valid_indices
             if segs[vi].get("speaker") == "学生"
-            and idx2prob.get(vi, 1.0) <= DIARIZATION_VOICEPRINT_BORDERLINE_LOW
+            and idx2prob.get(vi, 1.0) <= low
         ]
         student_proto = _l2_normalize(np.mean(student_vecs, axis=0)) if student_vecs else None
 
@@ -330,7 +336,7 @@ def diarize_speakers(audio_path, segments):
             if segs[vi].get("speaker") != "学生":
                 continue
             teacher_prob = idx2prob.get(vi, 0.0)
-            if teacher_prob < DIARIZATION_VOICEPRINT_BORDERLINE_LOW or teacher_prob > DIARIZATION_VOICEPRINT_BORDERLINE_HIGH:
+            if teacher_prob < low or teacher_prob > high:
                 continue
             seg_dur = float(segs[vi]["end"] - segs[vi]["start"])
             if seg_dur < DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION:
