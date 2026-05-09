@@ -463,6 +463,7 @@ venv\Scripts\activate
 **解决**：
 - 调整 `config.py` 中的 `PODIUM_REGION`，根据实际视频布局修改
 - 调低 `TEACHER_PRESENCE_THRESHOLD`（如改为 0.02）
+- 确认 `TEACHER_STATIC_COMPENSATION_ENABLED=True`，开启静止补偿人体检测
 - 确保视频前几秒有空镜头用于初始化背景
 
 ### Q5: 知识点切分太多/太少
@@ -502,8 +503,12 @@ venv\Scripts\activate
 | `SLIDE_CHANGE_THRESHOLD` | 0.70 | SSIM 翻页阈值 | 越小越灵敏 |
 | `FULLSCREEN_BRIGHT_RATIO` | 0.35 | 全屏 PPT 亮部阈值 | 光线偏暗时可下调 |
 | `FULLSCREEN_LOW_SAT_RATIO` | 0.45 | 全屏 PPT 低饱和阈值 | 画面偏彩色时可下调 |
-| `FULLSCREEN_EDGE_RATIO` | 0.02 | 全屏 PPT 边缘密度阈值 | 文字较少时可下调 |
-| `TEACHER_PRESENCE_THRESHOLD` | 0.05 | 教师检测阈值 | 减小可提高检测率 |
+| `FULLSCREEN_EDGE_RATIO` | 0.005 | 全屏 PPT 边缘密度阈值 | 文字较少时可下调 |
+| `TEACHER_PRESENCE_THRESHOLD` | 0.02 | 运动检测阈值 | 减小可提高静态场景检出率 |
+| `TEACHER_STATIC_COMPENSATION_ENABLED` | True | 是否启用静止补偿（人体检测兜底） | 讲台静止授课场景建议开启 |
+| `TEACHER_STATIC_DETECT_INTERVAL` | 2 | 静止补偿检测间隔（采样点） | 变大可提速，变小更灵敏 |
+| `TEACHER_STATIC_MIN_WEIGHT` | 0.20 | 人体检测最小权重 | 增大可减少误检 |
+| `TEACHER_STATIC_MIN_AREA_RATIO` | 0.015 | 人体框最小面积占比 | 增大可减少远处误检 |
 | `WHISPER_MODEL_SIZE` | "base" | Whisper 模型 | tiny/base/small/medium |
 | `DIARIZATION_N_CLUSTERS` | 2 | 说话人聚类类别数 | 课堂场景建议固定 2（教师/学生） |
 | `DIARIZATION_TEXT_WEIGHT` / `DIARIZATION_ACOUSTIC_WEIGHT` | 0.38 / 0.62 | 文本/声学融合权重 | 课堂讲授场景建议以声学为主，文本作辅助 |
@@ -542,7 +547,7 @@ venv\Scripts\activate
   "fps": 25.0,
   "duration": 3600.0,
   "teacher_timeline": [
-    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12, "full_screen_ppt": false}
+    {"time": 0.0, "in_podium": true, "motion_ratio": 0.12, "static_person_detected": false, "full_screen_ppt": false}
   ],
   "slide_transitions": [
     {"time": 45.0, "ssim": 0.42, "slide_idx": 1}
