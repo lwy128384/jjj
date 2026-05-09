@@ -148,7 +148,7 @@ def _is_semantic_valid_segment(seg):
     if len(text) < MIN_TEXT_LENGTH:
         return False
     no_sp = float(seg.get("no_speech_prob", 1.0) or 1.0)
-    if no_sp < NO_SPEECH_PROB_THRESHOLD:
+    if no_sp <= NO_SPEECH_PROB_THRESHOLD:
         return True
     if not (NO_SPEECH_IGNORE_WITH_TEXT and text):
         return False
