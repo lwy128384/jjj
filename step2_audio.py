@@ -43,6 +43,9 @@ try:
     DIARIZATION_SMOOTH_WINDOW   = _cfg.DIARIZATION_SMOOTH_WINDOW
     DIARIZATION_SMOOTH_MAX_DURATION = _cfg.DIARIZATION_SMOOTH_MAX_DURATION
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = _cfg.DIARIZATION_SMOOTH_MIN_NEIGHBORS
+    DIARIZATION_TEACHER_PROB_THRESHOLD = _cfg.DIARIZATION_TEACHER_PROB_THRESHOLD
+    DIARIZATION_VOICEPRINT_BORDERLINE_LOW = _cfg.DIARIZATION_VOICEPRINT_BORDERLINE_LOW
+    DIARIZATION_VOICEPRINT_BORDERLINE_HIGH = _cfg.DIARIZATION_VOICEPRINT_BORDERLINE_HIGH
     DIARIZATION_VOICEPRINT_ASSIST_ENABLED = _cfg.DIARIZATION_VOICEPRINT_ASSIST_ENABLED
     DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = _cfg.DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES
     DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION = _cfg.DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION
@@ -75,6 +78,9 @@ except ImportError:
     DIARIZATION_SMOOTH_WINDOW   = 3
     DIARIZATION_SMOOTH_MAX_DURATION = 4.0
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = 2
+    DIARIZATION_TEACHER_PROB_THRESHOLD = 0.50
+    DIARIZATION_VOICEPRINT_BORDERLINE_LOW = 0.30
+    DIARIZATION_VOICEPRINT_BORDERLINE_HIGH = 0.70
     DIARIZATION_VOICEPRINT_ASSIST_ENABLED = True
     DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = 2
     DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION = 0.8
@@ -201,6 +207,16 @@ def diarize_speakers(audio_path, segments):
             return np.zeros_like(arr)
         return (arr - np.mean(arr)) / std
 
+    def _normalize_to_prob(arr):
+        arr = np.asarray(arr, dtype=float)
+        if len(arr) == 0:
+            return arr
+        lo = float(np.min(arr))
+        hi = float(np.max(arr))
+        if hi - lo < 1e-8:
+            return np.full_like(arr, 0.5, dtype=float)
+        return (arr - lo) / (hi - lo)
+
     def _text_teacher_score(text):
         LENGTH_NORM_FACTOR = 35.0
         MAX_LENGTH_BONUS = 1.6
@@ -271,24 +287,42 @@ def diarize_speakers(audio_path, segments):
         for i, s in enumerate(segs):
             s["speaker"] = labels[i]
 
-    def _voiceprint_relabel_inplace(segs, valid_indices, voiceprints):
+    def _voiceprint_relabel_inplace(segs, valid_indices, voiceprints, teacher_probs):
         if not DIARIZATION_VOICEPRINT_ASSIST_ENABLED:
             return 0
         if len(valid_indices) != len(voiceprints) or not valid_indices:
             return 0
+        if len(teacher_probs) != len(valid_indices):
+            return 0
+        if DIARIZATION_VOICEPRINT_BORDERLINE_LOW > DIARIZATION_VOICEPRINT_BORDERLINE_HIGH:
+            return 0
 
         idx2vp = {vi: _l2_normalize(vp) for vi, vp in zip(valid_indices, voiceprints)}
-        teacher_vecs = [idx2vp[vi] for vi in valid_indices if segs[vi].get("speaker") == "教师"]
+        idx2prob = {vi: float(tp) for vi, tp in zip(valid_indices, teacher_probs)}
+        teacher_vecs = [
+            idx2vp[vi]
+            for vi in valid_indices
+            if segs[vi].get("speaker") == "教师"
+            and idx2prob.get(vi, 0.0) >= DIARIZATION_VOICEPRINT_BORDERLINE_HIGH
+        ]
         if len(teacher_vecs) < DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES:
             return 0
 
         teacher_proto = _l2_normalize(np.mean(teacher_vecs, axis=0))
-        student_vecs = [idx2vp[vi] for vi in valid_indices if segs[vi].get("speaker") == "学生"]
+        student_vecs = [
+            idx2vp[vi]
+            for vi in valid_indices
+            if segs[vi].get("speaker") == "学生"
+            and idx2prob.get(vi, 1.0) <= DIARIZATION_VOICEPRINT_BORDERLINE_LOW
+        ]
         student_proto = _l2_normalize(np.mean(student_vecs, axis=0)) if student_vecs else None
 
         changed = 0
         for vi in valid_indices:
             if segs[vi].get("speaker") != "学生":
+                continue
+            teacher_prob = idx2prob.get(vi, 0.0)
+            if teacher_prob < DIARIZATION_VOICEPRINT_BORDERLINE_LOW or teacher_prob > DIARIZATION_VOICEPRINT_BORDERLINE_HIGH:
                 continue
             seg_dur = float(segs[vi]["end"] - segs[vi]["start"])
             if seg_dur < DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION:
@@ -371,29 +405,31 @@ def diarize_speakers(audio_path, segments):
             + DIARIZATION_TEXT_WEIGHT * z_text
         )
 
-        cluster_score = {}
-        for idx_local, lb in enumerate(labels):
-            cluster_score.setdefault(lb, []).append(float(teacher_scores[idx_local]))
-        cluster_score = {lb: float(np.mean(v)) for lb, v in cluster_score.items()}
-        teacher_lb = max(cluster_score, key=cluster_score.get)
+        # 片段级概率：避免“整簇贴标签”导致同一位教师被拆成两簇时整簇误判。
+        teacher_probs = _normalize_to_prob(teacher_scores)
 
-        # idx → speaker name map
+        # idx → speaker name map（按片段概率判定，而非按簇整体判定）
         idx2spk = {}
-        for vi, lb in zip(valid_idx, labels):
-            idx2spk[vi] = "教师" if lb == teacher_lb else "学生"
+        idx2prob = {}
+        for vi, prob in zip(valid_idx, teacher_probs):
+            p = float(prob)
+            idx2prob[vi] = p
+            idx2spk[vi] = "教师" if p >= DIARIZATION_TEACHER_PROB_THRESHOLD else "学生"
 
         for i, seg in enumerate(segments):
             if i in idx2spk:
                 seg["speaker"] = idx2spk[i]
+                seg["teacher_prob"] = round(idx2prob[i], 4)
             else:
                 # 最近有效帧的说话人
                 nearest = min(valid_idx, key=lambda j: abs(j - i))
                 seg["speaker"] = idx2spk.get(nearest, "教师")
+                seg["teacher_prob"] = round(float(idx2prob.get(nearest, 0.5)), 4)
 
         _smooth_labels_inplace(segments)
-        relabeled = _voiceprint_relabel_inplace(segments, valid_idx, voiceprints)
+        relabeled = _voiceprint_relabel_inplace(segments, valid_idx, voiceprints, teacher_probs)
         if relabeled > 0:
-            print(f"  声纹辅助复判: 学生→教师 {relabeled} 段")
+            print(f"  声纹边界复判: 学生→教师 {relabeled} 段")
             _smooth_labels_inplace(segments)
 
         speakers = ["教师", "学生"]
