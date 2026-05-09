@@ -514,6 +514,8 @@ venv\Scripts\activate
 | `STEP2_TEXT_CORRECTION_TERMS` | 见配置 | 专业术语词典 | 建议按学科持续补充 |
 | `STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST` | 0.22 | 拼音归一化编辑距离阈值 | 越小越保守 |
 | `STEP2_TEXT_CORRECTION_MAX_CHAR_DIST` | 1 | 中文字符编辑距离上限 | 越小越保守 |
+| `STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF` | 1 | 术语与候选词长度差上限 | 越小越保守 |
+| `STEP2_TEXT_CORRECTION_CHAR_WEIGHT` | 0.05 | 字符编辑距离在综合评分中的权重 | 增大则更重视字形接近 |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
 | `MIN_KNOWLEDGE_DURATION` | 45 | 最短知识点（秒）| 增大可避免过度切分 |
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |

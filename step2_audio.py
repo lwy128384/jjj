@@ -65,6 +65,8 @@ try:
     STEP2_TEXT_CORRECTION_MIN_CHARS = _cfg.STEP2_TEXT_CORRECTION_MIN_CHARS
     STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = _cfg.STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST
     STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = _cfg.STEP2_TEXT_CORRECTION_MAX_CHAR_DIST
+    STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = _cfg.STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF
+    STEP2_TEXT_CORRECTION_CHAR_WEIGHT = _cfg.STEP2_TEXT_CORRECTION_CHAR_WEIGHT
 except ImportError:
     OUTPUT_DIR                  = r"D:\video\output"
     WHISPER_MODEL_SIZE          = "base"
@@ -112,6 +114,8 @@ except ImportError:
     STEP2_TEXT_CORRECTION_MIN_CHARS = 2
     STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = 0.22
     STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = 1
+    STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = 1
+    STEP2_TEXT_CORRECTION_CHAR_WEIGHT = 0.05
 
 
 # ============================================================
@@ -203,10 +207,10 @@ def transcribe(audio_path):
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
 
 
-def _is_chinese_token(token):
+def _is_cjk_token(token):
     if not token:
         return False
-    return bool(_CJK_RE.fullmatch(token))
+    return _CJK_RE.fullmatch(token) is not None
 
 
 def _levenshtein_distance(a, b):
@@ -238,7 +242,7 @@ def _build_term_index(terms, lazy_pinyin):
             continue
         if len(s) < STEP2_TEXT_CORRECTION_MIN_CHARS:
             continue
-        if not _is_chinese_token(s):
+        if not _is_cjk_token(s):
             continue
         cleaned.append(s)
     uniq_terms = sorted(set(cleaned), key=lambda x: (-len(x), x))
@@ -252,13 +256,15 @@ def _build_term_index(terms, lazy_pinyin):
 
 
 def _best_term_match(token, term_items, lazy_pinyin):
-    if not _is_chinese_token(token):
+    if not _is_cjk_token(token):
         return token, None
     if len(token) < STEP2_TEXT_CORRECTION_MIN_CHARS:
         return token, None
     token_py = " ".join(lazy_pinyin(token, errors="ignore"))
     if not token_py:
         return token, None
+    token_len = len(token)
+    token_py_len = len(token_py)
 
     best_term = None
     best_score = float("inf")
@@ -266,16 +272,17 @@ def _best_term_match(token, term_items, lazy_pinyin):
     for term, term_py in term_items:
         if term == token:
             return token, None
-        if abs(len(term) - len(token)) > 1:
+        term_len = len(term)
+        if abs(term_len - token_len) > STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF:
             continue
         py_dist = _levenshtein_distance(token_py, term_py)
-        py_norm = py_dist / max(len(token_py), len(term_py), 1)
+        py_norm = py_dist / max(token_py_len, len(term_py))
         if py_norm > STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST:
             continue
         char_dist = _levenshtein_distance(token, term)
         if char_dist > STEP2_TEXT_CORRECTION_MAX_CHAR_DIST:
             continue
-        score = py_norm + 0.05 * char_dist
+        score = py_norm + STEP2_TEXT_CORRECTION_CHAR_WEIGHT * char_dist
         if score < best_score:
             best_score = score
             best_term = term
@@ -295,9 +302,13 @@ def correct_transcription_with_pinyin_fuzzy(segments):
         return segments, {"enabled": False, "attempted_segments": 0, "changed_segments": 0, "total_replacements": 0}
     try:
         import jieba
+    except ImportError:
+        print("  警告: 缺少 jieba，跳过步骤2文本纠错")
+        return segments, {"enabled": False, "attempted_segments": len(segments), "changed_segments": 0, "total_replacements": 0}
+    try:
         from pypinyin import lazy_pinyin
     except ImportError:
-        print("  警告: 缺少 jieba/pypinyin，跳过步骤2文本纠错")
+        print("  警告: 缺少 pypinyin，跳过步骤2文本纠错")
         return segments, {"enabled": False, "attempted_segments": len(segments), "changed_segments": 0, "total_replacements": 0}
 
     term_items = _build_term_index(STEP2_TEXT_CORRECTION_TERMS, lazy_pinyin)
@@ -307,7 +318,7 @@ def correct_transcription_with_pinyin_fuzzy(segments):
     changed_segments = 0
     total_replacements = 0
     for seg in segments:
-        raw_text = str(seg.get("text", "") or "")
+        raw_text = str(seg.get("text", ""))
         if not raw_text.strip():
             continue
         tokens = jieba.lcut(raw_text, cut_all=False)

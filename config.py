@@ -120,8 +120,11 @@ STEP2_TEXT_CORRECTION_TERMS = [
     "亚里士多德", "算法", "数据集", "低谷", "模型", "训练", "推理",
 ]
 STEP2_TEXT_CORRECTION_MIN_CHARS = 2
+# 拼音归一化编辑距离阈值；默认0.22在常见误识别（如“低谱”→“低谷”）和误改风险间折中
 STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = 0.22
 STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = 1
+STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = 1
+STEP2_TEXT_CORRECTION_CHAR_WEIGHT = 0.05
 
 # ============================================================
 # 步骤3 — 文本语义分析
