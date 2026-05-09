@@ -65,12 +65,12 @@ except ImportError:
     DIARIZATION_TEXT_WEIGHT     = 0.38
     DIARIZATION_ACOUSTIC_WEIGHT = 0.62
     DIARIZATION_FILLER_CUES     = ["嗯", "啊", "呃", "这个", "那个", "就是", "那么"]
-    DIARIZATION_TEACHER_CUES    = [
+    DIARIZATION_TEACHER_BASE_CUES = [
         "我们", "下面", "今天", "讲", "来看", "举个例子", "同学们", "回顾",
         "总结", "总之", "注意", "定义", "公式", "原理", "人工智能", "历史",
         "先", "然后", "接下来", "这个问题",
-        *DIARIZATION_FILLER_CUES, "大家", "注意看", "来看一下",
     ]
+    DIARIZATION_TEACHER_CUES = DIARIZATION_TEACHER_BASE_CUES + DIARIZATION_FILLER_CUES + ["大家", "注意看", "来看一下"]
     DIARIZATION_STUDENT_CUES    = [
         "老师", "请问", "我想问", "是不是", "对吗", "为什么", "怎么",
         "听不清", "没听懂", "可以再说", "啥意思",
@@ -232,9 +232,8 @@ def diarize_speakers(audio_path, segments):
         teacher_hits = sum(1 for cue in DIARIZATION_TEACHER_CUES if cue in t)
         student_hits = sum(1 for cue in DIARIZATION_STUDENT_CUES if cue in t)
         question_hits = t.count("？") + t.count("?")
-        filler_terms = tuple(DIARIZATION_FILLER_CUES)
-        filler_hits = sum(normalized_text.count(term) for term in filler_terms)
-        repeated_hits = sum(1 for term in filler_terms if term * 2 in normalized_text)
+        filler_hits = sum(normalized_text.count(term) for term in DIARIZATION_FILLER_CUES)
+        repeated_hits = sum(1 for term in DIARIZATION_FILLER_CUES if term * 2 in normalized_text)
         # 教师完整讲解常明显长于学生插话，适当提高长文本加分上限。
         length_bonus = min(len(normalized_text) / LENGTH_NORM_FACTOR, MAX_LENGTH_BONUS)
         return (

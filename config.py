@@ -76,13 +76,12 @@ DIARIZATION_ACOUSTIC_WEIGHT = 0.62
 DIARIZATION_FILLER_CUES = ["嗯", "啊", "呃", "这个", "那个", "就是", "那么"]
 
 # 教师常见课堂表达（命中越多，越偏向教师）
-# 依赖上面的 DIARIZATION_FILLER_CUES 作为统一语气词来源。
-DIARIZATION_TEACHER_CUES = [
+DIARIZATION_TEACHER_BASE_CUES = [
     "我们", "下面", "今天", "讲", "来看", "举个例子", "同学们", "回顾",
     "总结", "总之", "注意", "定义", "公式", "原理", "人工智能", "历史",
     "先", "然后", "接下来", "这个问题",
-    *DIARIZATION_FILLER_CUES, "大家", "注意看", "来看一下",
 ]
+DIARIZATION_TEACHER_CUES = DIARIZATION_TEACHER_BASE_CUES + DIARIZATION_FILLER_CUES + ["大家", "注意看", "来看一下"]
 
 # 学生常见提问表达（命中越多，越偏向学生）
 DIARIZATION_STUDENT_CUES = [
