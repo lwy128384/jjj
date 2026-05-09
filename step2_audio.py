@@ -43,11 +43,13 @@ try:
     DIARIZATION_SMOOTH_WINDOW   = _cfg.DIARIZATION_SMOOTH_WINDOW
     DIARIZATION_SMOOTH_MAX_DURATION = _cfg.DIARIZATION_SMOOTH_MAX_DURATION
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = _cfg.DIARIZATION_SMOOTH_MIN_NEIGHBORS
+    DIARIZATION_TEACHER_PROB_CENTER_QUANTILE = _cfg.DIARIZATION_TEACHER_PROB_CENTER_QUANTILE
     DIARIZATION_TEACHER_PROB_SIGMOID_SCALE = _cfg.DIARIZATION_TEACHER_PROB_SIGMOID_SCALE
     DIARIZATION_TEACHER_PROB_BIAS = _cfg.DIARIZATION_TEACHER_PROB_BIAS
     DIARIZATION_TEACHER_PROB_THRESHOLD = _cfg.DIARIZATION_TEACHER_PROB_THRESHOLD
     DIARIZATION_VOICEPRINT_BORDERLINE_LOW = _cfg.DIARIZATION_VOICEPRINT_BORDERLINE_LOW
     DIARIZATION_VOICEPRINT_BORDERLINE_HIGH = _cfg.DIARIZATION_VOICEPRINT_BORDERLINE_HIGH
+    DIARIZATION_VOICEPRINT_TEACHER_PROTO_QUANTILE = _cfg.DIARIZATION_VOICEPRINT_TEACHER_PROTO_QUANTILE
     DIARIZATION_VOICEPRINT_ASSIST_ENABLED = _cfg.DIARIZATION_VOICEPRINT_ASSIST_ENABLED
     DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = _cfg.DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES
     DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION = _cfg.DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION
@@ -80,11 +82,13 @@ except ImportError:
     DIARIZATION_SMOOTH_WINDOW   = 3
     DIARIZATION_SMOOTH_MAX_DURATION = 4.0
     DIARIZATION_SMOOTH_MIN_NEIGHBORS = 2
+    DIARIZATION_TEACHER_PROB_CENTER_QUANTILE = 0.35
     DIARIZATION_TEACHER_PROB_SIGMOID_SCALE = 1.0
     DIARIZATION_TEACHER_PROB_BIAS = 0.30
-    DIARIZATION_TEACHER_PROB_THRESHOLD = 0.38
-    DIARIZATION_VOICEPRINT_BORDERLINE_LOW = 0.30
-    DIARIZATION_VOICEPRINT_BORDERLINE_HIGH = 0.70
+    DIARIZATION_TEACHER_PROB_THRESHOLD = 0.45
+    DIARIZATION_VOICEPRINT_BORDERLINE_LOW = 0.28
+    DIARIZATION_VOICEPRINT_BORDERLINE_HIGH = 0.60
+    DIARIZATION_VOICEPRINT_TEACHER_PROTO_QUANTILE = 0.65
     DIARIZATION_VOICEPRINT_ASSIST_ENABLED = True
     DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES = 2
     DIARIZATION_VOICEPRINT_MIN_SEGMENT_DURATION = 0.8
@@ -215,7 +219,8 @@ def diarize_speakers(audio_path, segments):
         arr = np.asarray(arr, dtype=float)
         if len(arr) == 0:
             return arr
-        center = float(np.median(arr))
+        center_q = float(np.clip(DIARIZATION_TEACHER_PROB_CENTER_QUANTILE, 0.05, 0.95))
+        center = float(np.quantile(arr, center_q))
         mad = float(np.median(np.abs(arr - center)))
         std = float(np.std(arr))
         spread = mad if mad > 1e-6 else std
@@ -313,12 +318,27 @@ def diarize_speakers(audio_path, segments):
 
         idx2vp = {vi: _l2_normalize(vp) for vi, vp in zip(valid_indices, voiceprints)}
         idx2prob = {vi: float(tp) for vi, tp in zip(valid_indices, teacher_probs)}
+        teacher_candidate_idx = [
+            vi for vi in valid_indices if segs[vi].get("speaker") == "教师"
+        ]
+        teacher_candidate_probs = [idx2prob.get(vi, 0.0) for vi in teacher_candidate_idx]
+        proto_q = float(np.clip(DIARIZATION_VOICEPRINT_TEACHER_PROTO_QUANTILE, 0.05, 0.95))
+        if teacher_candidate_probs:
+            dynamic_high = float(np.quantile(teacher_candidate_probs, proto_q))
+            proto_high = min(high, max(low, dynamic_high))
+        else:
+            proto_high = high
         teacher_vecs = [
             idx2vp[vi]
-            for vi in valid_indices
-            if segs[vi].get("speaker") == "教师"
-            and idx2prob.get(vi, 0.0) >= high
+            for vi in teacher_candidate_idx
+            if idx2prob.get(vi, 0.0) >= proto_high
         ]
+        if len(teacher_vecs) < DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES and teacher_candidate_idx:
+            ranked_teacher_idx = sorted(
+                teacher_candidate_idx, key=lambda vi: idx2prob.get(vi, 0.0), reverse=True
+            )
+            top_n = min(len(ranked_teacher_idx), max(3, DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES))
+            teacher_vecs = [idx2vp[vi] for vi in ranked_teacher_idx[:top_n]]
         if len(teacher_vecs) < DIARIZATION_VOICEPRINT_MIN_TEACHER_SAMPLES:
             return 0
 
