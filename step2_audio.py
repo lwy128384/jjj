@@ -228,14 +228,14 @@ def diarize_speakers(audio_path, segments):
         t = (text or "").strip()
         if not t:
             return -0.2
-        normalized_text = "".join(t.split())
+        compact_text = "".join(t.split())
         teacher_hits = sum(1 for cue in DIARIZATION_TEACHER_CUES if cue in t)
         student_hits = sum(1 for cue in DIARIZATION_STUDENT_CUES if cue in t)
         question_hits = t.count("？") + t.count("?")
-        filler_hits = sum(normalized_text.count(term) for term in DIARIZATION_FILLER_CUES)
-        repeated_hits = sum(1 for term in DIARIZATION_FILLER_CUES if term * 2 in normalized_text)
+        filler_hits = sum(compact_text.count(term) for term in DIARIZATION_FILLER_CUES)
+        repeated_hits = sum(1 for term in DIARIZATION_FILLER_CUES if term * 2 in compact_text)
         # 教师完整讲解常明显长于学生插话，适当提高长文本加分上限。
-        length_bonus = min(len(normalized_text) / LENGTH_NORM_FACTOR, MAX_LENGTH_BONUS)
+        length_bonus = min(len(compact_text) / LENGTH_NORM_FACTOR, MAX_LENGTH_BONUS)
         return (
             teacher_hits * 1.0
             - student_hits * 1.0
