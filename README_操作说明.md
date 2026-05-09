@@ -272,11 +272,12 @@ python step3_text.py --video D:\video\lesson\高数第一章.mp4
 ```
 
 **功能**：
-- jieba 分词，去停用词
+- 文本归一化（可选 ASR 纠错词典替换）
+- jieba 分词 + 自定义停用词/黑名单过滤
 - TF-IDF 向量化
 - 滑动窗口余弦距离检测语义跳变（知识点边界）
 - 结合幻灯片切换辅助验证
-- 提取关键词，自动命名知识点
+- 按文档频次与权重提取关键词，自动命名知识点
 
 **依赖**：需先完成步骤 2（步骤 1 可选但有助于提升准确率）
 
@@ -511,6 +512,12 @@ venv\Scripts\activate
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
 | `MIN_KNOWLEDGE_DURATION` | 45 | 最短知识点（秒）| 增大可避免过度切分 |
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |
+| `KEYWORD_TITLE_COUNT` | 2 | 标题拼接关键词数量 | 一般保持 2，过大易冗长 |
+| `KEYWORD_MIN_DOC_FREQ` | 2 | 关键词最小文档频次 | 调大可抑制偶发噪声词 |
+| `KEYWORD_BLACKLIST` | 见配置 | 关键词黑名单 | 可加入口语废词 |
+| `STEP3_DOMAIN_TERMS` | 见配置 | 领域词典 | 加入课程专业术语可提升分词质量 |
+| `STEP3_ENABLE_TEXT_NORMALIZATION` | True | 是否启用文本纠错替换 | ASR 错别词较多时建议开启 |
+| `STEP3_TEXT_REPLACE_MAP` | 见配置 | ASR 常见误识别替换表 | 按课程场景持续补充 |
 | `INTERFERENCE_TEACHER_ABSENT_RATIO` | 0.70 | 教师缺席干扰阈值 | 增大可宽容更多缺席 |
 | `INTERFERENCE_SILENCE_THRESHOLD` | 15 | 连续静默判干扰（秒）| 增大忽略短休息 |
 | `SEGMENT_MIN_DURATION` | 20 | 最短输出片段（秒）| 减小保留短内容 |
