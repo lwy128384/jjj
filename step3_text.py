@@ -189,7 +189,11 @@ def tokenize(text, jieba):
 
 def build_knowledge_title(keywords, idx):
     """知识点命名：优先关键词，不再添加“知识点N-”前缀。"""
-    kws = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+    kws = []
+    for k in (keywords or []):
+        token = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "", str(k).strip())
+        if token:
+            kws.append(token)
     if kws:
         return "_".join(kws[:KEYWORD_TITLE_COUNT])
     return f"片段{idx+1}"

@@ -70,6 +70,9 @@ except ImportError:
     BOUNDARY_POST_MIN_GAP = 30.0
     BOUNDARY_POST_MAX_GAP = 300.0
 
+MIN_BOUNDARY_DYNAMIC_THRESHOLD = 0.35
+MAX_BOUNDARY_DYNAMIC_THRESHOLD = 0.75
+
 
 # ============================================================
 # 工具函数
@@ -129,6 +132,10 @@ def _in_any_interval(t, intervals):
         if s <= t <= e:
             return True
     return False
+
+
+def _combine_point_text(pt):
+    return f"{pt.get('speech_text', '') or ''} {pt.get('ppt_text', '') or ''}".strip()
 
 
 def normalize_annotations(annotations):
@@ -214,8 +221,8 @@ def extract_features_from_index(multimodal_index, window_sec=10):
         # 幻灯片跳变
         slide_delta = int(pt["slide_idx"] != prev.get("slide_idx", 0))
 
-        text_now = (pt.get("speech_text", "") or "") + " " + (pt.get("ppt_text", "") or "")
-        text_prev = (prev.get("speech_text", "") or "") + " " + (prev.get("ppt_text", "") or "")
+        text_now = _combine_point_text(pt)
+        text_prev = _combine_point_text(prev)
         text_sim = _jaccard_similarity(text_now, text_prev)
 
         dur_now = max(_safe_float(pt.get("duration", TIME_RESOLUTION), TIME_RESOLUTION), 1e-3)
@@ -288,7 +295,7 @@ def label_from_annotation(series, annotations, tolerance_sec=3.0):
     for i, t in enumerate(times):
         is_explicit_interference = _in_any_interval(t, explicit_interference_ranges)
         is_in_knowledge = _in_any_interval(t, knowledge_ranges)
-        inferred_interference = bool(knowledge_ranges) and (not is_in_knowledge)
+        inferred_interference = bool(knowledge_ranges) and not is_in_knowledge
         if is_explicit_interference or inferred_interference:
             interf_label[i] = 1
 
@@ -307,7 +314,9 @@ def balance_dataset(X, y, neg_pos_ratio=3):
         return X, y
 
     n_pos = len(pos_idx)
-    n_neg = min(len(neg_idx), n_pos * max(int(neg_pos_ratio), 1))
+    # 防御式兜底：即使配置误传 0/负数，也保证最小可用采样比例为 1。
+    safe_ratio = int(neg_pos_ratio) if int(neg_pos_ratio) > 0 else 1
+    n_neg = min(len(neg_idx), n_pos * safe_ratio)
     sampled_neg = np.random.RandomState(RANDOM_STATE).choice(neg_idx, n_neg, replace=False)
     all_idx = np.concatenate([pos_idx, sampled_neg])
     np.random.RandomState(RANDOM_STATE).shuffle(all_idx)
@@ -343,7 +352,11 @@ def train_model(X, y, model_type="boundary"):
         else:
             class_weights[1] *= float(INTERFERENCE_POSITIVE_WEIGHT_MULTIPLIER)
 
-    stratify_y = y if len(classes) > 1 and min(np.bincount(y.astype(int))) >= 2 else None
+    def _can_stratify(labels):
+        vals, counts = np.unique(labels, return_counts=True)
+        return len(vals) > 1 and counts.min() >= 2
+
+    stratify_y = y if _can_stratify(y) else None
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=TRAIN_TEST_SPLIT, random_state=RANDOM_STATE, stratify=stratify_y
     )
@@ -494,7 +507,8 @@ def predict_boundaries(mindex):
             threshold += 0.03
         if slide_ratio <= 0.01 and silence_ratio <= 0.15:
             threshold -= 0.05
-        threshold = min(max(threshold, 0.35), 0.75)
+        threshold = min(max(threshold, MIN_BOUNDARY_DYNAMIC_THRESHOLD),
+                        MAX_BOUNDARY_DYNAMIC_THRESHOLD)
 
         if hasattr(clf, "predict_proba"):
             proba = clf.predict_proba(X_s)
@@ -563,7 +577,7 @@ def post_process_boundaries(predicted_times, series, min_gap=30, max_gap=300):
     if len(times) <= 1:
         return times
 
-    point_by_time = {round(float(p.get("time", -1)), 2): p for p in series}
+    point_by_time = {round(float(p.get("time", 0.0)), 2): p for p in series}
 
     merged = [times[0]]
     for t in times[1:]:

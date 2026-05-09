@@ -36,6 +36,7 @@ try:
     INTERFERENCE_MIN_DURATION         = _cfg.INTERFERENCE_MIN_DURATION
     SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
     SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
+    INTERFERENCE_SEGMENT_TITLE        = _cfg.INTERFERENCE_SEGMENT_TITLE
 except ImportError:
     OUTPUT_DIR                        = r"D:\video\output"
     INTERFERENCE_TEACHER_ABSENT_RATIO = 0.70
@@ -44,6 +45,7 @@ except ImportError:
     INTERFERENCE_MIN_DURATION         = 5.0
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
+    INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
 
 # Maximum allowed gap (seconds) for merging adjacent model-predicted timestamps.
 MODEL_INTERFERENCE_MAX_GAP = 1.5
@@ -57,7 +59,13 @@ MODEL_PREDICT_EXCEPTIONS = (
     KeyError,
     RuntimeError,
 )
-INTERFERENCE_TITLE = "干扰片段"
+INTERFERENCE_TITLE = INTERFERENCE_SEGMENT_TITLE
+ABSENT_THRESHOLD_MIN = 0.50
+ABSENT_THRESHOLD_MAX = 0.90
+LOW_SPEECH_THRESHOLD_MIN = 0.60
+LOW_SPEECH_THRESHOLD_MAX = 0.95
+SILENCE_THRESHOLD_MIN = 8.0
+SILENCE_THRESHOLD_MAX = 30.0
 
 
 # ============================================================
@@ -198,9 +206,9 @@ def _dynamic_interference_thresholds(multimodal_index):
     if slide_density > 0.02:
         absent_th += 0.03
 
-    absent_th = min(max(absent_th, 0.50), 0.90)
-    low_speech_th = min(max(low_speech_th, 0.60), 0.95)
-    silence_sec_th = min(max(silence_sec_th, 8.0), 30.0)
+    absent_th = min(max(absent_th, ABSENT_THRESHOLD_MIN), ABSENT_THRESHOLD_MAX)
+    low_speech_th = min(max(low_speech_th, LOW_SPEECH_THRESHOLD_MIN), LOW_SPEECH_THRESHOLD_MAX)
+    silence_sec_th = min(max(silence_sec_th, SILENCE_THRESHOLD_MIN), SILENCE_THRESHOLD_MAX)
     return absent_th, low_speech_th, silence_sec_th
 
 
