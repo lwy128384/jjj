@@ -114,6 +114,14 @@ DIARIZATION_VOICEPRINT_STUDENT_MARGIN = 0.03
 
 SPEECH_CONFIDENCE_THRESHOLD = 0.60   # 低于此值 → 低置信度
 NO_SPEECH_PROB_THRESHOLD    = 0.50   # 高于此值 → 视为非语音/静默
+STEP2_ENABLE_TEXT_CORRECTION = True
+STEP2_TEXT_CORRECTION_TERMS = [
+    "人工智能", "机器学习", "深度学习", "神经网络", "图灵", "图灵测试",
+    "亚里士多德", "算法", "数据集", "低谷", "模型", "训练", "推理",
+]
+STEP2_TEXT_CORRECTION_MIN_CHARS = 2
+STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = 0.22
+STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = 1
 
 # ============================================================
 # 步骤3 — 文本语义分析
