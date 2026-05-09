@@ -281,7 +281,7 @@ def analyze_video_visual(video_path, output_dir, video_name):
     segment_last_text          = ""
     segment_last_time          = None
     segment_last_ssim          = None
-    static_person_last = False
+    static_person_last = None
 
     # 预热背景模型
     print(f"  预热背景模型（{BG_INIT_FRAMES} 帧）…")
@@ -311,11 +311,11 @@ def analyze_video_visual(video_path, output_dir, video_name):
             motion_present = bool(fg_ratio > TEACHER_PRESENCE_THRESHOLD)
             static_person_present = False
             if (not motion_present) and (not fullscreen_ppt) and TEACHER_STATIC_COMPENSATION_ENABLED:
-                if idx % TEACHER_STATIC_DETECT_INTERVAL == 0:
+                if static_person_last is None or idx % TEACHER_STATIC_DETECT_INTERVAL == 0:
                     static_person_last = detect_person_in_podium(hog_detector, podium_crop)
                 static_person_present = static_person_last
             else:
-                static_person_last = False
+                static_person_last = None
             in_podium   = bool(motion_present or static_person_present or fullscreen_ppt)
 
             teacher_timeline.append({
