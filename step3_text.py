@@ -36,6 +36,8 @@ try:
     TOP_KEYWORDS           = _cfg.TOP_KEYWORDS
     MIN_TEXT_LENGTH        = _cfg.MIN_TEXT_LENGTH
     NO_SPEECH_PROB_THRESHOLD = _cfg.NO_SPEECH_PROB_THRESHOLD
+    NO_SPEECH_IGNORE_WITH_TEXT = _cfg.NO_SPEECH_IGNORE_WITH_TEXT
+    NO_SPEECH_TEXT_SHORT_LEN = _cfg.NO_SPEECH_TEXT_SHORT_LEN
     KEYWORD_TITLE_COUNT    = _cfg.KEYWORD_TITLE_COUNT
     KEYWORD_MIN_DOC_FREQ   = _cfg.KEYWORD_MIN_DOC_FREQ
     KEYWORD_BLACKLIST      = set(_cfg.KEYWORD_BLACKLIST)
@@ -50,7 +52,9 @@ except ImportError:
     MAX_KNOWLEDGE_DURATION = 600
     TOP_KEYWORDS           = 5
     MIN_TEXT_LENGTH        = 5
-    NO_SPEECH_PROB_THRESHOLD = 0.50
+    NO_SPEECH_PROB_THRESHOLD = 0.80
+    NO_SPEECH_IGNORE_WITH_TEXT = True
+    NO_SPEECH_TEXT_SHORT_LEN = 3
     KEYWORD_TITLE_COUNT    = 2
     KEYWORD_MIN_DOC_FREQ   = 2
     KEYWORD_BLACKLIST      = {
@@ -137,6 +141,18 @@ def normalize_text(text):
                 out = out.replace(src, dst)
     out = re.sub(r"\s+", " ", out).strip()
     return out
+
+
+def _is_semantic_valid_segment(seg):
+    normalized_text = normalize_text(seg.get("text", ""))
+    if len(normalized_text) < MIN_TEXT_LENGTH:
+        return False
+    no_sp = float(seg.get("no_speech_prob", 1.0) or 1.0)
+    if no_sp <= NO_SPEECH_PROB_THRESHOLD:
+        return True
+    if not (NO_SPEECH_IGNORE_WITH_TEXT and normalized_text):
+        return False
+    return len(normalized_text) > NO_SPEECH_TEXT_SHORT_LEN
 
 
 def init_jieba():
@@ -358,9 +374,7 @@ def detect_boundaries(segments, jieba, visual_features=None):
         cp["text"] = normalize_text(s.get("text", ""))
         normalized_segments.append(cp)
 
-    valid = [s for s in normalized_segments
-             if len(s.get("text", "").strip()) >= MIN_TEXT_LENGTH
-             and s.get("no_speech_prob", 1.0) < NO_SPEECH_PROB_THRESHOLD]
+    valid = [s for s in normalized_segments if _is_semantic_valid_segment(s)]
 
     if len(valid) < SEMANTIC_WINDOW_SIZE * 2:
         print("  有效语音段不足，整个视频作为一个知识点")
