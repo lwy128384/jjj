@@ -60,6 +60,8 @@ try:
     DIARIZATION_VOICEPRINT_STUDENT_MARGIN = _cfg.DIARIZATION_VOICEPRINT_STUDENT_MARGIN
     SPEECH_CONFIDENCE_THRESHOLD = _cfg.SPEECH_CONFIDENCE_THRESHOLD
     NO_SPEECH_PROB_THRESHOLD    = _cfg.NO_SPEECH_PROB_THRESHOLD
+    NO_SPEECH_IGNORE_WITH_TEXT  = _cfg.NO_SPEECH_IGNORE_WITH_TEXT
+    NO_SPEECH_TEXT_SHORT_LEN    = _cfg.NO_SPEECH_TEXT_SHORT_LEN
     STEP2_ENABLE_TEXT_CORRECTION = _cfg.STEP2_ENABLE_TEXT_CORRECTION
     STEP2_TEXT_CORRECTION_TERMS = list(_cfg.STEP2_TEXT_CORRECTION_TERMS)
     STEP2_TEXT_CORRECTION_MIN_CHARS = _cfg.STEP2_TEXT_CORRECTION_MIN_CHARS
@@ -105,7 +107,9 @@ except ImportError:
     DIARIZATION_VOICEPRINT_SIMILARITY_THRESHOLD = 0.82
     DIARIZATION_VOICEPRINT_STUDENT_MARGIN = 0.03
     SPEECH_CONFIDENCE_THRESHOLD = 0.60
-    NO_SPEECH_PROB_THRESHOLD    = 0.50
+    NO_SPEECH_PROB_THRESHOLD    = 0.80
+    NO_SPEECH_IGNORE_WITH_TEXT  = True
+    NO_SPEECH_TEXT_SHORT_LEN    = 3
     STEP2_ENABLE_TEXT_CORRECTION = True
     STEP2_TEXT_CORRECTION_TERMS = [
         "人工智能", "机器学习", "深度学习", "神经网络", "图灵", "图灵测试",
@@ -198,6 +202,16 @@ def transcribe(audio_path):
     print(f"  语言: {info.language}  概率: {info.language_probability:.2f}")
     print(f"  转录片段: {len(segments)} 个")
     return segments, info
+
+
+def _should_keep_speech_segment(seg):
+    no_sp = float(seg.get("no_speech_prob", 1.0) or 1.0)
+    if no_sp < NO_SPEECH_PROB_THRESHOLD:
+        return True
+    text = str(seg.get("text", "") or "").strip()
+    if not (NO_SPEECH_IGNORE_WITH_TEXT and text):
+        return False
+    return len(text) > NO_SPEECH_TEXT_SHORT_LEN
 
 
 # ============================================================
@@ -669,8 +683,7 @@ def analyze_video_audio(video_path, output_dir, video_name):
         segments, info = transcribe(wav_path)
         segments, correction_stats = correct_transcription_with_pinyin_fuzzy(segments)
 
-        valid_segs = [s for s in segments
-                      if s["no_speech_prob"] < NO_SPEECH_PROB_THRESHOLD]
+        valid_segs = [s for s in segments if _should_keep_speech_segment(s)]
         if valid_segs:
             segments, speakers = diarize_speakers(wav_path, segments)
         else:

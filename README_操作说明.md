@@ -516,6 +516,9 @@ venv\Scripts\activate
 | `STEP2_TEXT_CORRECTION_MAX_CHAR_DIST` | 1 | 中文字符编辑距离上限 | 越小越保守 |
 | `STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF` | 1 | 术语与候选词长度差上限 | 越小越保守 |
 | `STEP2_TEXT_CORRECTION_CHAR_WEIGHT` | 0.05 | 字符编辑距离在综合评分中的权重 | 增大则更重视字形接近 |
+| `NO_SPEECH_PROB_THRESHOLD` | 0.80 | no_speech_prob 静默阈值 | 建议课堂场景保持较高值，减少误删有声文本 |
+| `NO_SPEECH_IGNORE_WITH_TEXT` | True | 高 no_speech_prob 时是否启用文本兜底 | 建议开启，避免 Whisper 误判导致文本丢失 |
+| `NO_SPEECH_TEXT_SHORT_LEN` | 3 | 文本兜底最短长度（字符） | 极短文本仍可过滤噪声，建议 2~4 |
 | `BOUNDARY_THRESHOLD` | 0.35 | 语义边界阈值 | 越大切分越少 |
 | `MIN_KNOWLEDGE_DURATION` | 45 | 最短知识点（秒）| 增大可避免过度切分 |
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |

@@ -27,11 +27,15 @@ try:
     OUTPUT_DIR                  = _cfg.OUTPUT_DIR
     TIME_RESOLUTION             = _cfg.TIME_RESOLUTION
     NO_SPEECH_PROB_THRESHOLD    = _cfg.NO_SPEECH_PROB_THRESHOLD
+    NO_SPEECH_IGNORE_WITH_TEXT  = _cfg.NO_SPEECH_IGNORE_WITH_TEXT
+    NO_SPEECH_TEXT_SHORT_LEN    = _cfg.NO_SPEECH_TEXT_SHORT_LEN
     SPEECH_CONFIDENCE_THRESHOLD = _cfg.SPEECH_CONFIDENCE_THRESHOLD
 except ImportError:
     OUTPUT_DIR                  = r"D:\video\output"
     TIME_RESOLUTION             = 1.0
-    NO_SPEECH_PROB_THRESHOLD    = 0.50
+    NO_SPEECH_PROB_THRESHOLD    = 0.80
+    NO_SPEECH_IGNORE_WITH_TEXT  = True
+    NO_SPEECH_TEXT_SHORT_LEN    = 3
     SPEECH_CONFIDENCE_THRESHOLD = 0.60
 
 
@@ -90,6 +94,18 @@ def find_enclosing(items, t, s_key="start", e_key="end"):
     return None
 
 
+def _is_silence_segment(seg):
+    if not seg:
+        return True
+    no_sp = float(seg.get("no_speech_prob", 1.0) or 1.0)
+    if no_sp <= NO_SPEECH_PROB_THRESHOLD:
+        return False
+    text = str(seg.get("text", "") or "").strip()
+    if not (NO_SPEECH_IGNORE_WITH_TEXT and text):
+        return True
+    return len(text) <= NO_SPEECH_TEXT_SHORT_LEN
+
+
 # ============================================================
 # 构建时间序列
 # ============================================================
@@ -126,7 +142,7 @@ def build_timeline(visual, audio, text, duration):
         speaker    = a_seg.get("speaker",        "")   if a_seg else ""
         sp_conf    = a_seg.get("confidence",     0.0)  if a_seg else 0.0
         no_sp      = a_seg.get("no_speech_prob", 1.0)  if a_seg else 1.0
-        is_silence = no_sp > NO_SPEECH_PROB_THRESHOLD
+        is_silence = _is_silence_segment(a_seg)
 
         # —— 知识点 ——
         k_seg      = find_enclosing(know_segs, t)
