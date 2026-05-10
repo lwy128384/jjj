@@ -123,8 +123,8 @@ def format_hms_floor_ceil(start_sec, end_sec):
     raw_end = float(end_sec)
     if raw_end < raw_start:
         raw_start, raw_end = raw_end, raw_start
-    start = int(math.floor(raw_start))
-    end = int(math.ceil(raw_end))
+    start = math.floor(raw_start)
+    end = math.ceil(raw_end)
 
     def _to_hms(total_seconds):
         h = total_seconds // 3600
@@ -132,12 +132,12 @@ def format_hms_floor_ceil(start_sec, end_sec):
         s = total_seconds % 60
         return f"{h}:{m:02d}:{s:02d}"
 
-    return _to_hms(start), _to_hms(end)
+    return _to_hms(start), _to_hms(end), int(end - start)
 
 
 def _format_clip_time_fields(clip):
-    start_hms, end_hms = format_hms_floor_ceil(clip["start"], clip["end"])
-    return {**clip, "start": start_hms, "end": end_hms}
+    start_hms, end_hms, duration_sec = format_hms_floor_ceil(clip["start"], clip["end"])
+    return {**clip, "start": start_hms, "end": end_hms, "duration": duration_sec}
 
 
 def _merge_source_labels(prev_source, cur_source):
@@ -501,18 +501,19 @@ def fuse_and_cut(video_path, output_dir, video_name):
         })
     removed.extend(dropped_as_interference)
 
+    clips_for_index = [_format_clip_time_fields(c) for c in clips]
     final_index = {
         "video_name":       video_name,
         "video_path":       str(video_path),
         "processed_at":     datetime.datetime.now().isoformat(timespec="seconds"),
         "total_clips":      len(clips),
-        "clips":            [_format_clip_time_fields(c) for c in clips],
+        "clips":            clips_for_index,
         "removed_segments": removed,
         "stats": {
             "total_output_clips":      len([c for c in clips if c.get("status") == "ok"]),
             "total_removed_segments":  len(removed),
             "total_output_duration_s": sum(c.get("duration", 0)
-                                           for c in clips if c.get("status") == "ok"),
+                                           for c in clips_for_index if c.get("status") == "ok"),
         },
     }
 

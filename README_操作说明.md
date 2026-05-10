@@ -391,6 +391,7 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 
 字段说明：
 - `start` / `end`：片段时间戳（`H:MM:SS`，例如 `0:30:00`）
+- `duration`：秒级数字，按 `floor(start秒)` 与 `ceil(end秒)` 后相减得到
 - `title`：知识点名称
 - `is_interference`：可选；`true` = 显式干扰片段
 
@@ -598,6 +599,7 @@ venv\Scripts\activate
       "id": 0,
       "title": "极限_定义",
       "start": "0:00:00", "end": "0:03:58",
+      "duration": 238,
       "output_file": "D:\\video\\output\\xxx\\segments\\极限_定义.mp4",
       "keywords": ["极限", "定义"]
     }
