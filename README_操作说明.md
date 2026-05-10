@@ -204,8 +204,8 @@ D:\video\
 │       ├── multimodal_index.json     (步骤4输出)
 │       ├── final_index.json          (步骤5输出)
 │       └── segments\
-│           ├── 知识点1-绪论_背景.mp4
-│           └── 知识点2-基本概念_定义.mp4
+│           ├── 绪论_背景.mp4
+│           └── 基本概念_定义.mp4
 ├── models\                   ← 训练后的模型文件
 ├── annotations\              ← 人工标注文件（用于训练）
 ├── config.py
@@ -309,10 +309,10 @@ python step5_fusion.py --video D:\video\lesson\高数第一章.mp4
 ```
 
 **功能**：
-- 根据规则检测干扰片段（教师长时间不在 + 大量静默）
+- 根据规则 + 训练模型辅助检测干扰片段（动态阈值）
 - 生成剪辑指令并调用 ffmpeg 剪切
 - 输出以知识点命名的独立 MP4
-- 生成 `final_index.json`
+- 不输出干扰片段视频，仅在 `final_index.json` 中统一记录为“干扰片段”
 
 **依赖**：需先完成步骤 4
 
@@ -374,12 +374,6 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
       "is_interference": false
     },
     {
-      "start": 180.0,
-      "end": 205.0,
-      "title": "课间闲聊",
-      "is_interference": true
-    },
-    {
       "start": 205.0,
       "end": 480.0,
       "title": "第一节基本概念",
@@ -398,7 +392,11 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 字段说明：
 - `start` / `end`：片段时间戳（秒）
 - `title`：知识点名称
-- `is_interference`：`true` = 该片段为干扰，应被剔除
+- `is_interference`：可选；`true` = 显式干扰片段
+
+> 训练已支持“仅标注知识点片段”：
+> - 仅标知识点即可训练边界模型
+> - 知识点外时间自动视为干扰候选（用于干扰模型辅助打分）
 
 ### 7.2 训练
 
@@ -580,7 +578,7 @@ venv\Scripts\activate
   "knowledge_segments": [
     {
       "id": 0, "start": 0.0, "end": 240.0,
-      "title": "知识点1-极限_定义",
+      "title": "极限_定义",
       "keywords": ["极限", "定义", "收敛"]
     }
   ],
@@ -598,14 +596,14 @@ venv\Scripts\activate
   "clips": [
     {
       "id": 0,
-      "title": "知识点1-极限_定义",
+      "title": "极限_定义",
       "start": 0.0, "end": 238.0,
-      "output_file": "D:\\video\\output\\xxx\\segments\\知识点1-极限_定义.mp4",
+      "output_file": "D:\\video\\output\\xxx\\segments\\极限_定义.mp4",
       "keywords": ["极限", "定义"]
     }
   ],
   "removed_segments": [
-    {"start": 238.0, "end": 255.0, "reasons": ["静默占比 95%"]}
+    {"title": "干扰片段", "start": 238.0, "end": 255.0, "reasons": ["静默占比 95%"], "output_policy": "not_exported"}
   ]
 }
 ```

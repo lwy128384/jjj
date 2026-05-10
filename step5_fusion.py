@@ -36,6 +36,7 @@ try:
     INTERFERENCE_MIN_DURATION         = _cfg.INTERFERENCE_MIN_DURATION
     SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
     SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
+    INTERFERENCE_SEGMENT_TITLE        = _cfg.INTERFERENCE_SEGMENT_TITLE
 except ImportError:
     OUTPUT_DIR                        = r"D:\video\output"
     INTERFERENCE_TEACHER_ABSENT_RATIO = 0.70
@@ -44,6 +45,7 @@ except ImportError:
     INTERFERENCE_MIN_DURATION         = 5.0
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
+    INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
 
 # Maximum allowed gap (seconds) for merging adjacent model-predicted timestamps.
 MODEL_INTERFERENCE_MAX_GAP = 1.5
@@ -57,6 +59,13 @@ MODEL_PREDICT_EXCEPTIONS = (
     KeyError,
     RuntimeError,
 )
+INTERFERENCE_TITLE = INTERFERENCE_SEGMENT_TITLE
+ABSENT_THRESHOLD_MIN = 0.50
+ABSENT_THRESHOLD_MAX = 0.90
+LOW_SPEECH_THRESHOLD_MIN = 0.60
+LOW_SPEECH_THRESHOLD_MAX = 0.95
+SILENCE_THRESHOLD_MIN = 8.0
+SILENCE_THRESHOLD_MAX = 30.0
 
 
 # ============================================================
@@ -91,6 +100,21 @@ def sanitize_filename(name):
     """去除 Windows 文件名非法字符，并截断"""
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
     return name[:80].strip()
+
+
+def normalize_knowledge_title(title, fallback_id=None):
+    """
+    去除历史命名中的“知识点N-”前缀，保留知识点名称主体。
+    """
+    raw = str(title or "").strip()
+    cleaned = re.sub(r"^\s*知识点\s*\d+\s*[-_—:：]?\s*", "", raw)
+    if cleaned:
+        return cleaned
+    if raw:
+        return raw
+    if fallback_id is None:
+        return "未命名片段"
+    return f"片段{int(fallback_id) + 1}"
 
 
 def _merge_source_labels(prev_source, cur_source):
@@ -153,6 +177,41 @@ def _build_model_interference_ranges(model_times):
     return ranges
 
 
+def _dynamic_interference_thresholds(multimodal_index):
+    """
+    动态阈值：基于视频整体统计自动微调，避免固定阈值在不同课堂类型上失效。
+    """
+    stats = multimodal_index.get("stats", {}) or {}
+    teacher_presence_ratio = float(stats.get("teacher_presence_ratio", 0.0) or 0.0)
+    silence_ratio = float(stats.get("silence_ratio", 0.0) or 0.0)
+    duration = max(float(multimodal_index.get("duration", 0.0) or 0.0), 1.0)
+    slide_density = len(multimodal_index.get("slide_transitions", []) or []) / duration
+
+    absent_th = float(INTERFERENCE_TEACHER_ABSENT_RATIO)
+    low_speech_th = float(INTERFERENCE_LOW_SPEECH_RATIO)
+    silence_sec_th = float(INTERFERENCE_SILENCE_THRESHOLD)
+
+    if teacher_presence_ratio < 0.55:
+        absent_th += 0.08
+    elif teacher_presence_ratio > 0.90:
+        absent_th -= 0.05
+
+    if silence_ratio > 0.35:
+        low_speech_th += 0.05
+        silence_sec_th += 3.0
+    elif silence_ratio < 0.12:
+        low_speech_th -= 0.05
+        silence_sec_th -= 2.0
+
+    if slide_density > 0.02:
+        absent_th += 0.03
+
+    absent_th = min(max(absent_th, ABSENT_THRESHOLD_MIN), ABSENT_THRESHOLD_MAX)
+    low_speech_th = min(max(low_speech_th, LOW_SPEECH_THRESHOLD_MIN), LOW_SPEECH_THRESHOLD_MAX)
+    silence_sec_th = min(max(silence_sec_th, SILENCE_THRESHOLD_MIN), SILENCE_THRESHOLD_MAX)
+    return absent_th, low_speech_th, silence_sec_th
+
+
 def detect_interference(multimodal_index, model_times=None):
     """
     干扰规则（满足任一即标记）：
@@ -163,6 +222,7 @@ def detect_interference(multimodal_index, model_times=None):
     series   = multimodal_index["time_series"]
     know_segs = multimodal_index["knowledge_segments"]
     interferences = []
+    absent_th, low_speech_th, silence_sec_th = _dynamic_interference_thresholds(multimodal_index)
 
     # 按知识点段分析
     for ks in know_segs:
@@ -174,9 +234,9 @@ def detect_interference(multimodal_index, model_times=None):
         silence_ratio = sum(1 for p in pts if p["is_silence"]) / n
 
         reasons = []
-        if absent_ratio  > INTERFERENCE_TEACHER_ABSENT_RATIO:
+        if absent_ratio  > absent_th:
             reasons.append(f"教师缺席 {absent_ratio:.0%}")
-        if silence_ratio > INTERFERENCE_LOW_SPEECH_RATIO:
+        if silence_ratio > low_speech_th:
             reasons.append(f"静默占比 {silence_ratio:.0%}")
 
         if reasons:
@@ -199,7 +259,7 @@ def detect_interference(multimodal_index, model_times=None):
         else:
             if sil_start is not None:
                 sil_dur = pt["time"] - sil_start
-                if sil_dur >= INTERFERENCE_SILENCE_THRESHOLD:
+                if sil_dur >= silence_sec_th:
                     interferences.append({
                         "start":    sil_start,
                         "end":      pt["time"],
@@ -233,25 +293,46 @@ def detect_interference(multimodal_index, model_times=None):
 def build_edit_commands(know_segs, interferences, duration):
     """过滤干扰、添加缓冲，按知识点输出剪辑片段列表（不做片段合并）"""
 
-    def overlaps_interference(start, end):
+    def overlap_ratio(start, end):
         for intf in interferences:
             ovlp = min(end, intf["end"]) - max(start, intf["start"])
             if ovlp > 0 and ovlp / max(end - start, 0.001) > 0.5:
-                return True
-        return False
+                return ovlp / max(end - start, 0.001)
+        return 0.0
 
     valid = []
+    dropped = []
     for ks in know_segs:
-        if overlaps_interference(ks["start"], ks["end"]):
+        normalized_title = normalize_knowledge_title(ks.get("title", ""), ks.get("id"))
+        ovlp_ratio = overlap_ratio(ks["start"], ks["end"])
+        if ovlp_ratio > 0.5:
+            dropped.append({
+                "title": INTERFERENCE_TITLE,
+                "start": round(float(ks["start"]), 2),
+                "end": round(float(ks["end"]), 2),
+                "duration": round(float(ks["end"]) - float(ks["start"]), 2),
+                "reasons": [f"与干扰区间重叠 {ovlp_ratio:.0%}"],
+                "source": "knowledge_overlap_filter",
+                "output_policy": "not_exported",
+            })
             continue
         seg_dur = ks["end"] - ks["start"]
         if seg_dur < SEGMENT_MIN_DURATION:
+            dropped.append({
+                "title": INTERFERENCE_TITLE,
+                "start": round(float(ks["start"]), 2),
+                "end": round(float(ks["end"]), 2),
+                "duration": round(float(seg_dur), 2),
+                "reasons": [f"片段过短 {seg_dur:.1f}s < {SEGMENT_MIN_DURATION:.1f}s"],
+                "source": "min_duration_filter",
+                "output_policy": "not_exported",
+            })
             continue
         seg_s = max(0.0,     ks["start"] - SEGMENT_PADDING)
         seg_e = min(duration, ks["end"]   + SEGMENT_PADDING)
         valid.append({
             "original_id": ks["id"],
-            "title":       ks["title"],
+            "title":       normalized_title,
             "start":       round(seg_s, 2),
             "end":         round(seg_e, 2),
             "duration":    round(seg_e - seg_s, 2),
@@ -262,7 +343,7 @@ def build_edit_commands(know_segs, interferences, duration):
     for i, seg in enumerate(valid):
         seg["id"] = i
 
-    return valid
+    return valid, dropped
 
 
 # ============================================================
@@ -346,7 +427,7 @@ def fuse_and_cut(video_path, output_dir, video_name):
 
     # 生成剪辑指令
     print("  生成剪辑指令…")
-    commands = build_edit_commands(know_segs, interferences, duration)
+    commands, dropped_as_interference = build_edit_commands(know_segs, interferences, duration)
     print(f"  有效片段: {len(commands)} 个")
 
     # 剪切视频
@@ -387,11 +468,15 @@ def fuse_and_cut(video_path, output_dir, video_name):
     removed = []
     for intf in interferences:
         removed.append({
+            "title":    INTERFERENCE_TITLE,
             "start":    intf["start"],
             "end":      intf["end"],
             "duration": intf["duration"],
             "reasons":  intf["reasons"],
+            "source":   intf.get("source", "rule"),
+            "output_policy": "not_exported",
         })
+    removed.extend(dropped_as_interference)
 
     final_index = {
         "video_name":       video_name,
