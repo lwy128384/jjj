@@ -29,14 +29,12 @@ try:
     NO_SPEECH_PROB_THRESHOLD    = _cfg.NO_SPEECH_PROB_THRESHOLD
     NO_SPEECH_IGNORE_WITH_TEXT  = _cfg.NO_SPEECH_IGNORE_WITH_TEXT
     NO_SPEECH_TEXT_SHORT_LEN    = _cfg.NO_SPEECH_TEXT_SHORT_LEN
-    SPEECH_CONFIDENCE_THRESHOLD = _cfg.SPEECH_CONFIDENCE_THRESHOLD
 except ImportError:
     OUTPUT_DIR                  = r"D:\video\output"
     TIME_RESOLUTION             = 1.0
     NO_SPEECH_PROB_THRESHOLD    = 0.80
     NO_SPEECH_IGNORE_WITH_TEXT  = True
     NO_SPEECH_TEXT_SHORT_LEN    = 3
-    SPEECH_CONFIDENCE_THRESHOLD = 0.60
 
 
 # ============================================================

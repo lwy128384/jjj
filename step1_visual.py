@@ -53,7 +53,6 @@ except ImportError:
     OUTPUT_DIR                 = r"D:\video\output"
     VISUAL_SAMPLE_FPS          = 1
     PODIUM_REGION              = (0.38, 0.42, 0.66, 0.94)
-    PPT_REGION                 = (0.02, 0.02, 0.98, 0.80)
     PPT_REGION_FULLSCREEN      = (0.00, 0.00, 1.00, 0.90)
     FULLSCREEN_BRIGHT_RATIO    = 0.35
     FULLSCREEN_LOW_SAT_RATIO   = 0.45

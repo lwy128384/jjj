@@ -65,9 +65,6 @@ WHISPER_MODEL_SIZE  = "base"   # tiny / base / small / medium
 WHISPER_LANGUAGE    = "zh"     # 语言代码；None = 自动检测
 WHISPER_BEAM_SIZE   = 3
 
-MIN_SPEAKERS = 2
-MAX_SPEAKERS = 2
-
 # 说话人区分固定为二分类：教师 / 学生
 DIARIZATION_N_CLUSTERS = 2
 
