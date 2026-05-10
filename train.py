@@ -163,8 +163,8 @@ def normalize_annotations(annotations):
             continue
         if e < s:
             s, e = e, s
-        s = float(math.floor(s))
-        e = float(math.ceil(e))
+        s = math.floor(s)
+        e = math.ceil(e)
         if e - s <= 1e-6:
             continue
         is_intf = bool(ann.get("is_interference", False))

@@ -136,8 +136,6 @@ def format_hms_floor_ceil(start_sec, end_sec):
 
 
 def _format_clip_time_fields(clip):
-    if "start" not in clip or "end" not in clip:
-        return clip
     start_hms, end_hms = format_hms_floor_ceil(clip["start"], clip["end"])
     return {**clip, "start": start_hms, "end": end_hms}
 
