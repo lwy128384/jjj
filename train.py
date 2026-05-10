@@ -7,9 +7,9 @@
   {
     "video": "lesson1.mp4",
     "annotations": [
-      {"start": 0.0,   "end": 180.0, "title": "第一章绪论",  "is_interference": false},
-      {"start": 180.0, "end": 210.0, "title": "课间休息",    "is_interference": true},
-      {"start": 210.0, "end": 400.0, "title": "第一节基本概念","is_interference": false}
+      {"start": "0:00:00", "end": "0:03:00", "title": "第一章绪论",  "is_interference": false},
+      {"start": "0:03:00", "end": "0:03:30", "title": "课间休息",    "is_interference": true},
+      {"start": "0:03:30", "end": "0:06:40", "title": "第一节基本概念","is_interference": false}
     ]
   }
 
@@ -32,6 +32,7 @@ import argparse
 import traceback
 import glob
 import re
+import math
 import numpy as np
 from pathlib import Path
 
@@ -105,6 +106,16 @@ def _safe_float(v, default=0.0):
         return float(default)
 
 
+def _parse_time_seconds(v, default=0.0):
+    if isinstance(v, str):
+        text = v.strip()
+        if re.fullmatch(r"\d+:\d{2}:\d{2}", text):
+            h, m, s = text.split(":")
+            return float(int(h) * 3600 + int(m) * 60 + int(s))
+        return _safe_float(text, default)
+    return _safe_float(v, default)
+
+
 def _merge_intervals(intervals):
     valid = []
     for s, e in intervals:
@@ -146,19 +157,21 @@ def normalize_annotations(annotations):
     """
     normalized = []
     for ann in annotations or []:
-        s = _safe_float(ann.get("start"), None)
-        e = _safe_float(ann.get("end"), None)
+        s = _parse_time_seconds(ann.get("start"), None)
+        e = _parse_time_seconds(ann.get("end"), None)
         if s is None or e is None:
             continue
         if e < s:
             s, e = e, s
+        s = float(math.floor(s))
+        e = float(math.ceil(e))
         if e - s <= 1e-6:
             continue
         is_intf = bool(ann.get("is_interference", False))
         title = str(ann.get("title", "") or "").strip()
         normalized.append({
-            "start": round(s, 2),
-            "end": round(e, 2),
+            "start": s,
+            "end": e,
             "title": title,
             "is_interference": is_intf,
         })

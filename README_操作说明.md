@@ -368,20 +368,20 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
   "video": "高数第一章.mp4",
   "annotations": [
     {
-      "start": 0.0,
-      "end": 180.0,
+      "start": "0:00:00",
+      "end": "0:03:00",
       "title": "课程介绍",
       "is_interference": false
     },
     {
-      "start": 205.0,
-      "end": 480.0,
+      "start": "0:03:25",
+      "end": "0:08:00",
       "title": "第一节基本概念",
       "is_interference": false
     },
     {
-      "start": 480.0,
-      "end": 720.0,
+      "start": "0:08:00",
+      "end": "0:12:00",
       "title": "第二节极限定义",
       "is_interference": false
     }
@@ -390,7 +390,7 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 ```
 
 字段说明：
-- `start` / `end`：片段时间戳（秒）
+- `start` / `end`：片段时间戳（`H:MM:SS`，例如 `0:30:00`）
 - `title`：知识点名称
 - `is_interference`：可选；`true` = 显式干扰片段
 
@@ -597,7 +597,7 @@ venv\Scripts\activate
     {
       "id": 0,
       "title": "极限_定义",
-      "start": 0.0, "end": 238.0,
+      "start": "0:00:00", "end": "0:03:58",
       "output_file": "D:\\video\\output\\xxx\\segments\\极限_定义.mp4",
       "keywords": ["极限", "定义"]
     }

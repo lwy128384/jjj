@@ -22,6 +22,7 @@ import re
 import subprocess
 import argparse
 import datetime
+import math
 from pathlib import Path
 
 # ============================================================
@@ -115,6 +116,28 @@ def normalize_knowledge_title(title, fallback_id=None):
     if fallback_id is None:
         return "未命名片段"
     return f"片段{int(fallback_id) + 1}"
+
+
+def format_hms_floor_ceil(start_sec, end_sec):
+    start = int(math.floor(float(start_sec)))
+    end = int(math.ceil(float(end_sec)))
+    if end < start:
+        end = start
+
+    def _to_hms(total_seconds):
+        h = total_seconds // 3600
+        m = (total_seconds % 3600) // 60
+        s = total_seconds % 60
+        return f"{h}:{m:02d}:{s:02d}"
+
+    return _to_hms(start), _to_hms(end)
+
+
+def _format_clip_time_fields(clip):
+    if "start" not in clip or "end" not in clip:
+        return clip
+    start_hms, end_hms = format_hms_floor_ceil(clip["start"], clip["end"])
+    return {**clip, "start": start_hms, "end": end_hms}
 
 
 def _merge_source_labels(prev_source, cur_source):
@@ -483,7 +506,7 @@ def fuse_and_cut(video_path, output_dir, video_name):
         "video_path":       str(video_path),
         "processed_at":     datetime.datetime.now().isoformat(timespec="seconds"),
         "total_clips":      len(clips),
-        "clips":            clips,
+        "clips":            [_format_clip_time_fields(c) for c in clips],
         "removed_segments": removed,
         "stats": {
             "total_output_clips":      len([c for c in clips if c.get("status") == "ok"]),
