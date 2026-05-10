@@ -109,7 +109,7 @@ def _safe_float(v, default=0.0):
 def _parse_time_seconds(v, default=0.0):
     if isinstance(v, str):
         text = v.strip()
-        if re.fullmatch(r"\d+:\d{2}:\d{2}", text):
+        if re.fullmatch(r"\d+:[0-5]\d:[0-5]\d", text):
             h, m, s = text.split(":")
             return float(int(h) * 3600 + int(m) * 60 + int(s))
         return _safe_float(text, default)

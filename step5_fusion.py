@@ -119,10 +119,12 @@ def normalize_knowledge_title(title, fallback_id=None):
 
 
 def format_hms_floor_ceil(start_sec, end_sec):
-    start = int(math.floor(float(start_sec)))
-    end = int(math.ceil(float(end_sec)))
-    if end < start:
-        end = start
+    raw_start = float(start_sec)
+    raw_end = float(end_sec)
+    if raw_end < raw_start:
+        raw_start, raw_end = raw_end, raw_start
+    start = int(math.floor(raw_start))
+    end = int(math.ceil(raw_end))
 
     def _to_hms(total_seconds):
         h = total_seconds // 3600
