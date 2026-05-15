@@ -636,12 +636,12 @@ venv\Scripts\activate
 cd D:\video
 python init_annotation.py --video D:\video\lesson\高数第一章.mp4
 ```
-2. 用 VLC 打开原视频（`Ctrl+T` 看精确时间），打开 `annotations/高数第一章_annotation.json` 逐段修订。
+2. 用 VLC 打开原视频（Windows 用 `Ctrl+T`，macOS 用 `Cmd+T` 查看精确时间），打开 `annotations/高数第一章_annotation.json` 逐段修订。
 3. 标注规则：
    - 正常知识点：`is_interference=false`
    - 干扰段（课间、噪音、长静默、教师离场）：`is_interference=true`
    - 时间格式统一 `H:MM:SS`
-4. 每个视频至少完整标注一遍（边界误差控制在 ±10 秒即可）。
+4. 每个视频至少完整标注一遍（首轮边界误差可控制在 ±10 秒；精调阶段建议收紧到 ±3~5 秒，尤其是公式推导等高精度场景）。
 
 ### 阶段 B：训练
 

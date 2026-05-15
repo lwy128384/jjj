@@ -16,13 +16,16 @@ import os
 import json
 import math
 import argparse
+import re
 from pathlib import Path
 
 try:
     import config as _cfg
     OUTPUT_DIR = _cfg.OUTPUT_DIR
+    ANNOTATIONS_DIR = getattr(_cfg, "ANNOTATIONS_DIR", os.path.join(getattr(_cfg, "BASE_DIR", r"D:\video"), "annotations"))
 except ImportError:
     OUTPUT_DIR = r"D:\video\output"
+    ANNOTATIONS_DIR = r"D:\video\annotations"
 
 
 def _safe_float(v, default=None):
@@ -35,10 +38,14 @@ def _safe_float(v, default=None):
 def _parse_time_seconds(v):
     if isinstance(v, str):
         text = v.strip()
-        parts = text.split(":")
-        if len(parts) == 3 and all(p.isdigit() for p in parts):
-            h, m, s = [int(p) for p in parts]
-            return float(h * 3600 + m * 60 + s)
+        mt = re.fullmatch(r"(\d+):(\d{1,2}):(\d{1,2})(?:\.\d+)?", text)
+        if mt:
+            h = int(mt.group(1))
+            mi = int(mt.group(2))
+            s = float(mt.group(3))
+            if mi >= 60 or s >= 60:
+                return None
+            return float(h * 3600 + mi * 60 + s)
         return _safe_float(text, None)
     return _safe_float(v, None)
 
@@ -108,7 +115,7 @@ def main():
     parser.add_argument("--video", default=None, help="视频路径（用于自动定位 final_index）")
     parser.add_argument("--final_index", default=None, help="final_index.json 路径")
     parser.add_argument("--output", default=None, help="输出 annotation.json 路径")
-    parser.add_argument("--annotations_dir", default=r"D:\video\annotations", help="输出目录（未指定 --output 时生效）")
+    parser.add_argument("--annotations_dir", default=ANNOTATIONS_DIR, help="输出目录（未指定 --output 时生效）")
     parser.add_argument("--force", action="store_true", help="覆盖已存在的输出文件")
     args = parser.parse_args()
 
