@@ -4,7 +4,7 @@
 
 ## 快速入口
 
-- 详细使用文档：`/home/runner/work/jjj/jjj/README_操作说明.md`
+- 详细使用文档：`README_操作说明.md`
 - 全流程运行：`python run_all.py`
 - 从 step5 结果初始化标注：`python init_annotation.py --video D:\video\lesson\example.mp4`
 - 训练：`python train.py --annotation_dir D:\video\annotations\`
