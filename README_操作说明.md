@@ -10,7 +10,7 @@
 4. [目录结构](#4-目录结构)
 5. [各步骤说明](#5-各步骤说明)
 6. [一键运行全流程](#6-一键运行全流程)
-7. [训练模型（可选）](#7-训练模型可选)
+7. [手动标注→训练→评估→优化（可选）](#7-手动标注训练评估优化可选)
 8. [常见问题](#8-常见问题)
 9. [参数调节说明](#9-参数调节说明)
 10. [输出文件说明](#10-输出文件说明)
@@ -354,15 +354,22 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 
 ---
 
-## 7 训练模型（可选）
+## 7 手动标注→训练→评估→优化（可选）
 
-训练可提升知识点边界检测和干扰检测的准确率。
+适用场景：你已经完成步骤 1~5，有 `output/<视频名>/final_index.json` 与 `segments/` 输出。
 
-### 7.1 准备标注文件
+### 7.1 手动标注（完全手动，不使用额外脚本）
 
-在 `D:\video\annotations\` 中创建标注文件，文件名与视频同名，例如
-`高数第一章_annotation.json`：
+1. 先打开 `D:\video\output\<视频名>\final_index.json`，查看系统切分结果与“干扰片段”位置。
+2. 用 VLC 或播放器打开原视频，逐段在 `D:\video\annotations\<视频名>_annotation.json` 手动填写时间段。
+3. 标注规则：
+   - 正常知识点：`is_interference=false`
+   - 干扰段（课间、噪音、长静默、教师离场）：`is_interference=true`
+   - 时间格式统一 `H:MM:SS`
+4. 建议每个视频至少完整标注一遍（首轮可按 ±10 秒，后续精调收紧到 ±3~5 秒）。
+5. 可以只标知识点片段，不标的区间会被系统视为干扰候选。
 
+标注文件示例：
 ```json
 {
   "video": "高数第一章.mp4",
@@ -395,29 +402,25 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 - `title`：知识点名称
 - `is_interference`：可选；`true` = 显式干扰片段
 
-> 训练已支持“仅标注知识点片段”：
-> - 仅标知识点即可训练边界模型
-> - 知识点外时间自动视为干扰候选（用于干扰模型辅助打分）
-
 ### 7.2 训练
 
+单视频先验证：
 ```cmd
 cd D:\video
 python train.py --video D:\video\lesson\高数第一章.mp4 ^
                 --annotation D:\video\annotations\高数第一章_annotation.json
 ```
 
-> **注意**：`^` 是 cmd 中的换行符，可以写成一行
-
-### 7.3 批量训练多个视频
-
+多视频批量训练：
 ```cmd
 python train.py --annotation_dir D:\video\annotations\
 ```
 
 系统会自动在 `lesson/` 目录下寻找同名视频进行配对。
 
-### 7.4 评估模型效果
+> **注意**：`^` 是 cmd 中的换行符，可以写成一行
+
+### 7.3 评估
 
 ```cmd
 python train.py --eval ^
@@ -425,11 +428,38 @@ python train.py --eval ^
   --annotation D:\video\annotations\高数第一章_annotation.json
 ```
 
+建议同时看边界模型与干扰模型 F1：
+- F1 ≥ 0.70：效果较好，可直接使用
+- 0.55 ≤ F1 < 0.70：可接受，建议继续补标注
+- F1 < 0.55：建议补标注并调参
+
 模型文件保存在 `D:\video\models\`：
 - `boundary_model.pkl` — 知识点边界检测模型
 - `interference_model.pkl` — 干扰片段检测模型
 
 训练完成后，再次运行 `run_all.py` 时将自动使用这些模型。
+
+### 7.4 根据评估优化
+
+1. 根据低分项先补对应类型标注（边界问题补切分边界，干扰问题补干扰段）。
+2. 修改 `config.py` 参数微调后复训复评：
+   - 切分太碎：增大 `BOUNDARY_THRESHOLD`
+   - 切分太少：减小 `BOUNDARY_THRESHOLD`
+   - 干扰误删：增大 `INTERFERENCE_TEACHER_ABSENT_RATIO`
+   - 干扰漏删：减小 `INTERFERENCE_SILENCE_THRESHOLD`
+3. 迭代流程：`补标注 → 训练 → 评估 → 调参 → 重跑 step5`，直到结果稳定。
+
+### 7.5 重跑 step5 使用训练模型
+
+单视频：
+```cmd
+python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
+```
+
+全量视频：
+```cmd
+python run_all.py
+```
 
 ---
 
@@ -635,4 +665,10 @@ python step5_fusion.py --video D:\video\lesson\example.mp4
 
 :: 训练
 python train.py --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
+
+:: 评估
+python train.py --eval --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
+
+:: 只重跑步骤5（使用训练模型重剪）
+python run_all.py --video D:\video\lesson\example.mp4 --step 5
 ```
