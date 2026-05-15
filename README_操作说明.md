@@ -14,6 +14,7 @@
 8. [常见问题](#8-常见问题)
 9. [参数调节说明](#9-参数调节说明)
 10. [输出文件说明](#10-输出文件说明)
+11. [从 step5 到上线执行 SOP](#11-从-step5-到上线执行-sop)
 
 ---
 
@@ -107,6 +108,7 @@ D:\video\
   step4_align.py
   step5_fusion.py
   run_all.py
+  init_annotation.py
   train.py
   requirements.txt
   README_操作说明.md
@@ -215,6 +217,7 @@ D:\video\
 ├── step4_align.py
 ├── step5_fusion.py
 ├── run_all.py
+├── init_annotation.py          ← 根据 final_index 生成标注草稿
 ├── train.py
 └── requirements.txt
 ```
@@ -362,6 +365,16 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 
 在 `D:\video\annotations\` 中创建标注文件，文件名与视频同名，例如
 `高数第一章_annotation.json`：
+
+也可以先用工具从 `final_index.json` 自动生成标注草稿，再人工微调：
+
+```cmd
+cd D:\video
+python init_annotation.py --video D:\video\lesson\高数第一章.mp4
+```
+
+生成路径默认是：
+`D:\video\annotations\高数第一章_annotation.json`
 
 ```json
 {
@@ -612,6 +625,93 @@ venv\Scripts\activate
 
 ---
 
+## 11 从 step5 到上线执行 SOP
+
+适用场景：你已经完成步骤 1~5，有 `output/<视频名>/final_index.json` 与 `segments/` 输出。
+
+### 阶段 A：标注（先做 1 个视频验证流程）
+
+1. 生成标注草稿：
+```cmd
+cd D:\video
+python init_annotation.py --video D:\video\lesson\高数第一章.mp4
+```
+2. 用 VLC 打开原视频（`Ctrl+T` 看精确时间），打开 `annotations/高数第一章_annotation.json` 逐段修订。
+3. 标注规则：
+   - 正常知识点：`is_interference=false`
+   - 干扰段（课间、噪音、长静默、教师离场）：`is_interference=true`
+   - 时间格式统一 `H:MM:SS`
+4. 每个视频至少完整标注一遍（边界误差控制在 ±10 秒即可）。
+
+### 阶段 B：训练
+
+单视频先验证：
+```cmd
+python train.py --video D:\video\lesson\高数第一章.mp4 ^
+                --annotation D:\video\annotations\高数第一章_annotation.json
+```
+
+多视频批量训练：
+```cmd
+python train.py --annotation_dir D:\video\annotations\
+```
+
+训练产物：
+- `D:\video\models\boundary_model.pkl`
+- `D:\video\models\interference_model.pkl`
+
+### 阶段 C：评估
+
+```cmd
+python train.py --eval ^
+  --video D:\video\lesson\高数第一章.mp4 ^
+  --annotation D:\video\annotations\高数第一章_annotation.json
+```
+
+建议阈值参考：
+- F1 ≥ 0.70：可直接用
+- 0.55 ≤ F1 < 0.70：继续补标注
+- F1 < 0.55：先补标注并调参
+
+### 阶段 D：重剪（只重跑步骤5）
+
+单视频：
+```cmd
+python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
+```
+
+全量视频：
+```cmd
+python run_all.py
+```
+
+### 阶段 E：调参（修改 `config.py`）
+
+- 切分太碎：增大 `BOUNDARY_THRESHOLD`
+- 切分太少：减小 `BOUNDARY_THRESHOLD`
+- 干扰误删正常内容：增大 `INTERFERENCE_TEACHER_ABSENT_RATIO`
+- 干扰漏删：减小 `INTERFERENCE_SILENCE_THRESHOLD`
+- 专业术语识别差：补充 `STEP2_TEXT_CORRECTION_TERMS` 与 `STEP3_TEXT_REPLACE_MAP`
+
+### 阶段 F：迭代到稳定
+
+循环执行：
+`补标注 → 训练 → 评估 → 重剪 → 调参`
+
+建议每轮新增 1~2 个视频标注，通常 3~5 轮可稳定。
+
+### 阶段 G：上线批量生产
+
+把待处理视频放到 `D:\video\lesson\` 后执行：
+
+```cmd
+cd D:\video
+venv\Scripts\activate
+python run_all.py
+```
+
+---
+
 ## 快速参考命令
 
 ```cmd
@@ -633,6 +733,15 @@ python step3_text.py   --video D:\video\lesson\example.mp4
 python step4_align.py  --video D:\video\lesson\example.mp4
 python step5_fusion.py --video D:\video\lesson\example.mp4
 
+:: 从 step5 结果生成标注草稿
+python init_annotation.py --video D:\video\lesson\example.mp4
+
 :: 训练
 python train.py --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
+
+:: 评估
+python train.py --eval --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
+
+:: 只重跑步骤5（使用训练模型重剪）
+python run_all.py --video D:\video\lesson\example.mp4 --step 5
 ```
