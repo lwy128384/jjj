@@ -22,9 +22,11 @@ from pathlib import Path
 try:
     import config as _cfg
     OUTPUT_DIR = _cfg.OUTPUT_DIR
-    ANNOTATIONS_DIR = getattr(_cfg, "ANNOTATIONS_DIR", os.path.join(getattr(_cfg, "BASE_DIR", r"D:\video"), "annotations"))
+    BASE_DIR = getattr(_cfg, "BASE_DIR", r"D:\video")
+    ANNOTATIONS_DIR = getattr(_cfg, "ANNOTATIONS_DIR", os.path.join(BASE_DIR, "annotations"))
 except ImportError:
     OUTPUT_DIR = r"D:\video\output"
+    BASE_DIR = r"D:\video"
     ANNOTATIONS_DIR = r"D:\video\annotations"
 
 
@@ -38,13 +40,11 @@ def _safe_float(v, default=None):
 def _parse_time_seconds(v):
     if isinstance(v, str):
         text = v.strip()
-        mt = re.fullmatch(r"(\d+):(\d{1,2}):(\d{1,2})(?:\.\d+)?", text)
+        mt = re.fullmatch(r"(\d+):([0-5]?\d):([0-5]?\d)(?:\.\d+)?", text)
         if mt:
             h = int(mt.group(1))
             mi = int(mt.group(2))
             s = float(mt.group(3))
-            if mi >= 60 or s >= 60:
-                return None
             return float(h * 3600 + mi * 60 + s)
         return _safe_float(text, None)
     return _safe_float(v, None)
