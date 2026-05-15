@@ -90,13 +90,6 @@ def load_json(path):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
-def save_json(data, path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
 def _safe_float(v, default=0.0):
     try:
         return float(v)
@@ -342,7 +335,7 @@ def train_model(X, y, model_type="boundary"):
     Returns: trained model, metrics dict
     """
     try:
-        from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+        from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import train_test_split
         from sklearn.metrics import classification_report, f1_score
         from sklearn.preprocessing import StandardScaler
