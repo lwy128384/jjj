@@ -6,5 +6,4 @@
 
 - 详细使用文档：`README_操作说明.md`
 - 全流程运行：`python run_all.py`
-- 从 step5 结果初始化标注：`python init_annotation.py --video D:\video\lesson\example.mp4`
-- 训练：`python train.py --annotation_dir D:\video\annotations\`
+- 手动标注后训练：`python train.py --annotation_dir D:\video\annotations\`

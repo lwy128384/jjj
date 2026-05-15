@@ -11,10 +11,10 @@
 5. [各步骤说明](#5-各步骤说明)
 6. [一键运行全流程](#6-一键运行全流程)
 7. [训练模型（可选）](#7-训练模型可选)
-8. [常见问题](#8-常见问题)
-9. [参数调节说明](#9-参数调节说明)
-10. [输出文件说明](#10-输出文件说明)
-11. [从 step5 到上线执行 SOP](#11-从-step5-到上线执行-sop)
+8. [手动标注→训练→评估→优化流程（放在步骤7之后）](#8-手动标注训练评估优化流程放在步骤7之后)
+9. [常见问题](#9-常见问题)
+10. [参数调节说明](#10-参数调节说明)
+11. [输出文件说明](#11-输出文件说明)
 
 ---
 
@@ -108,7 +108,6 @@ D:\video\
   step4_align.py
   step5_fusion.py
   run_all.py
-  init_annotation.py
   train.py
   requirements.txt
   README_操作说明.md
@@ -217,7 +216,6 @@ D:\video\
 ├── step4_align.py
 ├── step5_fusion.py
 ├── run_all.py
-├── init_annotation.py          ← 根据 final_index 生成标注草稿
 ├── train.py
 └── requirements.txt
 ```
@@ -366,16 +364,6 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 在 `D:\video\annotations\` 中创建标注文件，文件名与视频同名，例如
 `高数第一章_annotation.json`：
 
-也可以先用工具从 `final_index.json` 自动生成标注草稿，再人工微调：
-
-```cmd
-cd D:\video
-python init_annotation.py --video D:\video\lesson\高数第一章.mp4
-```
-
-生成路径默认是：
-`D:\video\annotations\高数第一章_annotation.json`
-
 ```json
 {
   "video": "高数第一章.mp4",
@@ -446,7 +434,72 @@ python train.py --eval ^
 
 ---
 
-## 8 常见问题
+## 8 手动标注→训练→评估→优化流程（放在步骤7之后）
+
+适用场景：你已经完成步骤 1~5，有 `output/<视频名>/final_index.json` 与 `segments/` 输出。
+
+### 8.1 手动标注（完全手动，不使用额外脚本）
+
+1. 先打开 `D:\video\output\<视频名>\final_index.json`，查看系统切分结果与“干扰片段”位置。
+2. 用 VLC 或播放器打开原视频，逐段在 `D:\video\annotations\<视频名>_annotation.json` 手动填写时间段。
+3. 标注规则：
+   - 正常知识点：`is_interference=false`
+   - 干扰段（课间、噪音、长静默、教师离场）：`is_interference=true`
+   - 时间格式统一 `H:MM:SS`
+4. 建议每个视频至少完整标注一遍（首轮可按 ±10 秒，后续精调收紧到 ±3~5 秒）。
+5. 可以只标知识点片段，不标的区间会被系统视为干扰候选。
+
+### 8.2 训练
+
+单视频先验证：
+```cmd
+python train.py --video D:\video\lesson\高数第一章.mp4 ^
+                --annotation D:\video\annotations\高数第一章_annotation.json
+```
+
+多视频批量训练：
+```cmd
+python train.py --annotation_dir D:\video\annotations\
+```
+
+### 8.3 评估
+
+```cmd
+python train.py --eval ^
+  --video D:\video\lesson\高数第一章.mp4 ^
+  --annotation D:\video\annotations\高数第一章_annotation.json
+```
+
+建议同时看边界模型与干扰模型 F1：
+- F1 ≥ 0.70：效果较好，可直接使用
+- 0.55 ≤ F1 < 0.70：可接受，建议继续补标注
+- F1 < 0.55：建议补标注并调参
+
+### 8.4 根据评估优化
+
+1. 根据低分项先补对应类型标注（边界问题补切分边界，干扰问题补干扰段）。
+2. 修改 `config.py` 参数微调后复训复评：
+   - 切分太碎：增大 `BOUNDARY_THRESHOLD`
+   - 切分太少：减小 `BOUNDARY_THRESHOLD`
+   - 干扰误删：增大 `INTERFERENCE_TEACHER_ABSENT_RATIO`
+   - 干扰漏删：减小 `INTERFERENCE_SILENCE_THRESHOLD`
+3. 迭代流程：`补标注 → 训练 → 评估 → 调参 → 重跑 step5`，直到结果稳定。
+
+### 8.5 重跑 step5 使用训练模型
+
+单视频：
+```cmd
+python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
+```
+
+全量视频：
+```cmd
+python run_all.py
+```
+
+---
+
+## 9 常见问题
 
 ### Q0: 忘记激活虚拟环境，`import` 报错找不到模块
 **解决**：每次打开新的 cmd 窗口后，必须先执行：
@@ -502,7 +555,7 @@ venv\Scripts\activate
 
 ---
 
-## 9 参数调节说明
+## 10 参数调节说明
 
 所有参数集中在 `D:\video\config.py` 中，**无需修改其他文件**。
 
@@ -551,7 +604,7 @@ venv\Scripts\activate
 
 ---
 
-## 10 输出文件说明
+## 11 输出文件说明
 
 ### `visual_features.json`
 ```json
@@ -625,98 +678,6 @@ venv\Scripts\activate
 
 ---
 
-## 11 从 step5 到上线执行 SOP
-
-适用场景：你已经完成步骤 1~5，有 `output/<视频名>/final_index.json` 与 `segments/` 输出。
-
-### 阶段 A：标注（先做 1 个视频验证流程）
-
-1. 生成标注草稿：
-```cmd
-cd D:\video
-python init_annotation.py --video D:\video\lesson\高数第一章.mp4
-```
-2. 用 VLC 打开原视频（Windows 用 `Ctrl+T`，macOS 用 `Cmd+T` 查看精确时间），打开 `annotations/高数第一章_annotation.json` 逐段修订。
-3. 标注规则：
-   - 正常知识点：`is_interference=false`
-   - 干扰段（课间、噪音、长静默、教师离场）：`is_interference=true`
-   - 时间格式统一 `H:MM:SS`
-4. 每个视频至少完整标注一遍（建议精度阶梯：粗切 ±10 秒 → 敏感场景首轮 ±5 秒 → 精调阶段 ±2~3 秒）。
-   - 第 1 轮训练前：按粗切或敏感场景精度完成全片覆盖
-   - 第 1 轮评估后：针对低分区间（边界错位、干扰误判）收紧到 ±2~3 秒
-5. 用评估命令回看误差位置（见“阶段 C：评估”），优先修正误差大的时间边界。
-
-### 阶段 B：训练
-
-单视频先验证：
-```cmd
-python train.py --video D:\video\lesson\高数第一章.mp4 ^
-                --annotation D:\video\annotations\高数第一章_annotation.json
-```
-
-多视频批量训练：
-```cmd
-python train.py --annotation_dir D:\video\annotations\
-```
-
-训练产物：
-- `D:\video\models\boundary_model.pkl`
-- `D:\video\models\interference_model.pkl`
-
-### 阶段 C：评估
-
-```cmd
-python train.py --eval ^
-  --video D:\video\lesson\高数第一章.mp4 ^
-  --annotation D:\video\annotations\高数第一章_annotation.json
-```
-
-建议阈值参考（经验值，默认对 **边界模型 F1** 与 **干扰模型 F1** 同时适用；若两者冲突，按较低者优先优化）：
-- F1 ≥ 0.70：可直接用
-- 0.55 ≤ F1 < 0.70：继续补标注
-- F1 < 0.55：先补标注并调参
-
-示例：若边界 F1=0.75、干扰 F1=0.60，优先补“干扰段”标注并调干扰参数，再复训复评。
-
-### 阶段 D：重剪（只重跑步骤5）
-
-单视频：
-```cmd
-python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
-```
-
-全量视频：
-```cmd
-python run_all.py
-```
-
-### 阶段 E：调参（修改 `config.py`）
-
-- 切分太碎：增大 `BOUNDARY_THRESHOLD`
-- 切分太少：减小 `BOUNDARY_THRESHOLD`
-- 干扰误删正常内容：增大 `INTERFERENCE_TEACHER_ABSENT_RATIO`
-- 干扰漏删：减小 `INTERFERENCE_SILENCE_THRESHOLD`
-- 专业术语识别差：补充 `STEP2_TEXT_CORRECTION_TERMS` 与 `STEP3_TEXT_REPLACE_MAP`
-
-### 阶段 F：迭代到稳定
-
-循环执行：
-`补标注 → 训练 → 评估 → 重剪 → 调参`
-
-建议每轮新增 1~2 个视频标注，通常 3~5 轮可稳定。
-
-### 阶段 G：上线批量生产
-
-把待处理视频放到 `D:\video\lesson\` 后执行：
-
-```cmd
-cd D:\video
-venv\Scripts\activate
-python run_all.py
-```
-
----
-
 ## 快速参考命令
 
 ```cmd
@@ -737,9 +698,6 @@ python step2_audio.py  --video D:\video\lesson\example.mp4
 python step3_text.py   --video D:\video\lesson\example.mp4
 python step4_align.py  --video D:\video\lesson\example.mp4
 python step5_fusion.py --video D:\video\lesson\example.mp4
-
-:: 从 step5 结果生成标注草稿
-python init_annotation.py --video D:\video\lesson\example.mp4
 
 :: 训练
 python train.py --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
