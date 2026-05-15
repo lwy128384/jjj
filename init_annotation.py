@@ -40,7 +40,7 @@ def _safe_float(v, default=None):
 def _parse_time_seconds(v):
     if isinstance(v, str):
         text = v.strip()
-        mt = re.fullmatch(r"(\d+):([0-5]?\d):([0-5]?\d)(?:\.\d+)?", text)
+        mt = re.fullmatch(r"(\d+):([0-5]?\d):([0-5]?\d(?:\.\d+)?)", text)
         if mt:
             h = int(mt.group(1))
             mi = int(mt.group(2))
