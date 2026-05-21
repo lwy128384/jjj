@@ -583,6 +583,15 @@ def cut_segment(video_path, start, end, out_path):
     """ffmpeg 剪切片段，优先 stream copy（快），失败则重新编码"""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
+    def _decode_subprocess_output(raw):
+        if raw is None:
+            return ""
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, (bytes, bytearray)):
+            return raw.decode("utf-8", errors="replace")
+        return str(raw)
+
     # 快速模式：stream copy
     cmd_copy = [
         "ffmpeg", "-y",
@@ -592,7 +601,7 @@ def cut_segment(video_path, start, end, out_path):
         "-avoid_negative_ts", "1",
         str(out_path),
     ]
-    r = subprocess.run(cmd_copy, capture_output=True, text=True)
+    r = subprocess.run(cmd_copy, capture_output=True)
     if r.returncode == 0 and os.path.getsize(out_path) > 1024:
         return
 
@@ -607,9 +616,10 @@ def cut_segment(video_path, start, end, out_path):
         "-c:a", "aac", "-b:a", "128k",
         str(out_path),
     ]
-    r2 = subprocess.run(cmd_enc, capture_output=True, text=True)
+    r2 = subprocess.run(cmd_enc, capture_output=True)
     if r2.returncode != 0:
-        raise RuntimeError(f"ffmpeg 剪切失败:\n{r2.stderr[-600:]}")
+        stderr_text = _decode_subprocess_output(r2.stderr)
+        raise RuntimeError(f"ffmpeg 剪切失败:\n{stderr_text[-600:]}")
 
 
 # ============================================================
