@@ -38,13 +38,6 @@ try:
     SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
     SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
     INTERFERENCE_SEGMENT_TITLE        = _cfg.INTERFERENCE_SEGMENT_TITLE
-    EXAMPLE_CUE_WORDS                 = _cfg.EXAMPLE_CUE_WORDS
-    NON_KNOWLEDGE_MIN_DURATION        = _cfg.NON_KNOWLEDGE_MIN_DURATION
-    TEACHER_QUESTION_CUES             = _cfg.TEACHER_QUESTION_CUES
-    STUDENT_ANSWER_CUES               = _cfg.STUDENT_ANSWER_CUES
-    QA_MAX_GAP                        = _cfg.QA_MAX_GAP
-    QA_MIN_TEACHER_DURATION           = _cfg.QA_MIN_TEACHER_DURATION
-    QA_MIN_STUDENT_DURATION           = _cfg.QA_MIN_STUDENT_DURATION
 except ImportError:
     OUTPUT_DIR                        = r"D:\video\output"
     INTERFERENCE_TEACHER_ABSENT_RATIO = 0.70
@@ -54,13 +47,6 @@ except ImportError:
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
     INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
-    EXAMPLE_CUE_WORDS                 = ["例题", "这道题", "练习", "作业", "考试", "测试", "做题", "解题", "我们来看题"]
-    NON_KNOWLEDGE_MIN_DURATION        = 10.0
-    TEACHER_QUESTION_CUES             = ["谁来", "请回答", "你说说", "点名", "提问", "问", "同学"]
-    STUDENT_ANSWER_CUES               = ["我认为", "我觉得", "不知道", "不会", "没听懂"]
-    QA_MAX_GAP                        = 5.0
-    QA_MIN_TEACHER_DURATION           = 2.0
-    QA_MIN_STUDENT_DURATION           = 1.0
 
 # Maximum allowed gap (seconds) for merging adjacent model-predicted timestamps.
 MODEL_INTERFERENCE_MAX_GAP = 1.5
@@ -254,22 +240,12 @@ def detect_interference(multimodal_index, model_times=None):
     干扰规则（满足任一即标记）：
       1. 某知识点段内教师缺席比例 > 阈值
       2. 某知识点段内静默比例 > 阈值
-      3. 教师在场但处于非知识点讲题（例题/练习）持续超阈值
-      4. 师生问答互动（教师提问 + 学生回答）且间隔较短
-      5. 全局连续静默 > 阈值时长
+      3. 全局连续静默 > 阈值时长
     """
     series   = multimodal_index["time_series"]
     know_segs = multimodal_index["knowledge_segments"]
     interferences = []
     absent_th, low_speech_th, silence_sec_th = _dynamic_interference_thresholds(multimodal_index)
-    time_resolution = float(multimodal_index.get("time_resolution", 1.0) or 1.0)
-
-    def _contains_any(text, cues):
-        t = str(text or "").strip()
-        return bool(t) and any(c in t for c in cues)
-
-    def _in_knowledge_ranges(t):
-        return any(ks["start"] <= t <= ks["end"] for ks in know_segs)
 
     # 按知识点段分析
     for ks in know_segs:
@@ -296,105 +272,6 @@ def detect_interference(multimodal_index, model_times=None):
                 "silence_ratio":        round(silence_ratio, 3),
                 "source":              "knowledge_segment",
             })
-
-    # 新增规则1：教师在场但不在知识点区间讲例题/练习
-    non_know_start = None
-    non_know_last = None
-    for pt in series:
-        t = float(pt.get("time", 0.0) or 0.0)
-        k_title = str(pt.get("knowledge_title", "") or "").strip()
-        unknown_title = k_title in {"", "未知", "未命名片段"}
-        is_non_knowledge = (not _in_knowledge_ranges(t)) or unknown_title
-        hit = (
-            pt.get("speaker") == "教师"
-            and bool(pt.get("teacher_present", False))
-            and is_non_knowledge
-            and _contains_any(pt.get("speech_text", ""), EXAMPLE_CUE_WORDS)
-        )
-        if hit:
-            if non_know_start is None:
-                non_know_start = t
-            non_know_last = t
-        else:
-            if non_know_start is not None and non_know_last is not None:
-                seg_end = non_know_last + time_resolution
-                seg_dur = seg_end - non_know_start
-                if seg_dur >= NON_KNOWLEDGE_MIN_DURATION:
-                    interferences.append({
-                        "start": round(non_know_start, 2),
-                        "end": round(seg_end, 2),
-                        "duration": round(seg_dur, 2),
-                        "reasons": [f"非知识点讲题 {seg_dur:.1f}s"],
-                        "teacher_absent_ratio": 0.0,
-                        "silence_ratio": 0.0,
-                        "source": "non_knowledge_example",
-                    })
-            non_know_start = None
-            non_know_last = None
-    if non_know_start is not None and non_know_last is not None:
-        seg_end = non_know_last + time_resolution
-        seg_dur = seg_end - non_know_start
-        if seg_dur >= NON_KNOWLEDGE_MIN_DURATION:
-            interferences.append({
-                "start": round(non_know_start, 2),
-                "end": round(seg_end, 2),
-                "duration": round(seg_dur, 2),
-                "reasons": [f"非知识点讲题 {seg_dur:.1f}s"],
-                "teacher_absent_ratio": 0.0,
-                "silence_ratio": 0.0,
-                "source": "non_knowledge_example",
-            })
-
-    # 新增规则2：师生问答互动（教师提问 + 学生回答）
-    utterances = []
-    cur = None
-    for pt in series:
-        t = float(pt.get("time", 0.0) or 0.0)
-        speaker = str(pt.get("speaker", "") or "").strip()
-        text = str(pt.get("speech_text", "") or "").strip()
-        if speaker not in {"教师", "学生"} or not text or bool(pt.get("is_silence", False)):
-            continue
-        if cur and speaker == cur["speaker"] and text == cur["text"] and t <= cur["end"] + time_resolution + TIME_EPSILON:
-            cur["end"] = t
-        else:
-            if cur:
-                utterances.append(cur)
-            cur = {"speaker": speaker, "text": text, "start": t, "end": t}
-    if cur:
-        utterances.append(cur)
-
-    for i in range(len(utterances) - 1):
-        a = utterances[i]
-        b = utterances[i + 1]
-        if a["speaker"] == b["speaker"]:
-            continue
-        gap = max(0.0, b["start"] - (a["end"] + time_resolution))
-        if gap > QA_MAX_GAP:
-            continue
-        teacher_u = a if a["speaker"] == "教师" else b
-        student_u = a if a["speaker"] == "学生" else b
-        teacher_dur = (teacher_u["end"] + time_resolution) - teacher_u["start"]
-        student_dur = (student_u["end"] + time_resolution) - student_u["start"]
-        if teacher_dur < QA_MIN_TEACHER_DURATION or student_dur < QA_MIN_STUDENT_DURATION:
-            continue
-        if not _contains_any(teacher_u["text"], TEACHER_QUESTION_CUES):
-            continue
-        student_short_answer = len(student_u["text"]) <= 8
-        if not (_contains_any(student_u["text"], STUDENT_ANSWER_CUES) or student_short_answer):
-            continue
-
-        seg_s = min(a["start"], b["start"])
-        seg_e = max(a["end"], b["end"]) + time_resolution
-        seg_dur = seg_e - seg_s
-        interferences.append({
-            "start": round(seg_s, 2),
-            "end": round(seg_e, 2),
-            "duration": round(seg_dur, 2),
-            "reasons": [f"师生问答互动 {seg_dur:.1f}s"],
-            "teacher_absent_ratio": 0.0,
-            "silence_ratio": 0.0,
-            "source": "qa_interaction",
-        })
 
     # 扫描连续静默段
     sil_start = None
