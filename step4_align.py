@@ -214,7 +214,7 @@ def align_features(video_path, output_dir, video_name):
     }
 
     out_file = os.path.join(output_dir, "multimodal_index.json")
-    result = dump_json_simplified(result, out_file, exclude_keys={"video_path"})
+    result = dump_json_simplified(result, out_file)
 
     print(f"\n  ✓ 多模态对齐完成")
     print(f"    教师在讲台: {result['stats']['teacher_presence_ratio']*100:.1f}%")

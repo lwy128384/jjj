@@ -525,7 +525,7 @@ def analyze_text(video_path, output_dir, video_name):
     }
 
     out_file = os.path.join(output_dir, "text_features.json")
-    result = dump_json_simplified(result, out_file, exclude_keys={"video_path"})
+    result = dump_json_simplified(result, out_file)
 
     print(f"\n  ✓ 文本分析完成")
     print(f"    知识点数: {len(segs)}")

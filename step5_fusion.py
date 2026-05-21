@@ -736,7 +736,7 @@ def fuse_and_cut(video_path, output_dir, video_name):
     }
 
     out_file = os.path.join(output_dir, "final_index.json")
-    final_index = dump_json_simplified(final_index, out_file, exclude_keys={"video_path"})
+    final_index = dump_json_simplified(final_index, out_file)
 
     print(f"\n  ✓ 剪辑完成")
     print(f"    输出片段: {final_index['stats']['total_output_clips']} 个")

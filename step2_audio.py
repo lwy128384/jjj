@@ -715,7 +715,7 @@ def analyze_video_audio(video_path, output_dir, video_name):
         }
 
         out_file = os.path.join(output_dir, "audio_features.json")
-        result = dump_json_simplified(result, out_file, exclude_keys={"video_path"})
+        result = dump_json_simplified(result, out_file)
 
         print(f"\n  ✓ 语音分析完成")
         print(f"    有效片段: {len(valid_segs)}")
