@@ -168,6 +168,15 @@ INTERFERENCE_LOW_SPEECH_RATIO     = 0.80  # 静默/低音比例 > 此值 → 干
 INTERFERENCE_SILENCE_THRESHOLD    = 15.0  # 连续静默 > 此值（秒） → 干扰
 INTERFERENCE_MIN_DURATION         = 5.0   # 最短干扰持续时长（秒）
 INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
+EXAMPLE_CUE_WORDS = [
+    "例题", "这道题", "练习", "作业", "考试", "测试", "做题", "解题", "我们来看题",
+]
+NON_KNOWLEDGE_MIN_DURATION = 10.0  # 非知识点讲题持续时长阈值（秒）
+TEACHER_QUESTION_CUES = ["谁来", "请回答", "你说说", "点名", "提问", "问", "同学"]
+STUDENT_ANSWER_CUES = ["我认为", "我觉得", "不知道", "不会", "没听懂"]
+QA_MAX_GAP = 5.0
+QA_MIN_TEACHER_DURATION = 2.0
+QA_MIN_STUDENT_DURATION = 1.0
 
 SEGMENT_MIN_DURATION = 20.0   # 最短保留片段（秒）
 SEGMENT_PADDING      = 1.0    # 片段首尾缓冲（秒）
