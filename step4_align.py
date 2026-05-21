@@ -46,7 +46,7 @@ def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
     raw_name = Path(video_path).stem
     name = simplify_video_name(raw_name)
-    out  = os.path.join(base, raw_name)
+    out  = os.path.join(base, name)
     os.makedirs(out, exist_ok=True)
     return out, name
 
