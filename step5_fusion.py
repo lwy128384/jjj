@@ -25,6 +25,7 @@ import datetime
 import math
 import re
 from pathlib import Path
+from text_simplifier import dump_json_simplified, load_json_simplified, simplify_text, simplify_video_name
 
 # ============================================================
 # 默认参数
@@ -92,8 +93,9 @@ SILENCE_THRESHOLD_MAX = 30.0
 
 def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
-    name = Path(video_path).stem
-    out  = os.path.join(base, name)
+    raw_name = Path(video_path).stem
+    name = simplify_video_name(raw_name)
+    out  = os.path.join(base, raw_name)
     os.makedirs(out, exist_ok=True)
     return out, name
 
@@ -110,12 +112,12 @@ def load_multimodal_index(output_dir):
     p = os.path.join(output_dir, "multimodal_index.json")
     if not os.path.exists(p):
         raise FileNotFoundError(f"找不到多模态索引，请先运行步骤4: {p}")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_json_simplified(p)
 
 
 def sanitize_filename(name):
     """去除 Windows 文件名非法字符，并截断"""
+    name = simplify_text(name)
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
     return name[:80].strip()
 
@@ -124,7 +126,7 @@ def normalize_knowledge_title(title, fallback_id=None):
     """
     去除历史命名中的“知识点N-”前缀，保留知识点名称主体。
     """
-    raw = str(title or "").strip()
+    raw = simplify_text(title).strip()
     cleaned = re.sub(r"^\s*知识点\s*\d+\s*[-_—:：]?\s*", "", raw)
     if cleaned:
         return cleaned
@@ -734,8 +736,7 @@ def fuse_and_cut(video_path, output_dir, video_name):
     }
 
     out_file = os.path.join(output_dir, "final_index.json")
-    with open(out_file, "w", encoding="utf-8") as f:
-        json.dump(final_index, f, ensure_ascii=False, indent=2)
+    final_index = dump_json_simplified(final_index, out_file, exclude_keys={"video_path"})
 
     print(f"\n  ✓ 剪辑完成")
     print(f"    输出片段: {final_index['stats']['total_output_clips']} 个")

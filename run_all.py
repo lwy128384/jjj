@@ -22,6 +22,7 @@ import glob
 import argparse
 import traceback
 import datetime
+from text_simplifier import simplify_text
 
 # ============================================================
 # 读取基础路径
@@ -53,7 +54,7 @@ STEP_FUNCS = {
 
 def run_pipeline(video_path, start_step=1, end_step=5):
     print(f"\n{'='*60}")
-    print(f"  视频: {os.path.basename(video_path)}")
+    print(f"  视频: {simplify_text(os.path.basename(video_path))}")
     print(f"  时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")
 
@@ -117,7 +118,7 @@ def main():
             print("支持格式: mp4 / avi / mov / mkv / flv / wmv")
             sys.exit(1)
         print(f"找到 {len(videos)} 个视频:\n" +
-              "\n".join(f"  {os.path.basename(v)}" for v in videos))
+              "\n".join(f"  {simplify_text(os.path.basename(v))}" for v in videos))
 
     # 逐个处理
     all_results = {}
@@ -130,7 +131,7 @@ def main():
     print("  处理汇总")
     print(f"{'='*60}")
     for vpath, res in all_results.items():
-        name = os.path.basename(vpath)
+        name = simplify_text(os.path.basename(vpath))
         statuses = [f"步骤{s}: {'✓' if v['status']=='ok' else '✗'}"
                     for s, v in res.items()]
         print(f"  {name}  →  {', '.join(statuses)}")
