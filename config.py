@@ -168,6 +168,12 @@ INTERFERENCE_LOW_SPEECH_RATIO     = 0.80  # 静默/低音比例 > 此值 → 干
 INTERFERENCE_SILENCE_THRESHOLD    = 15.0  # 连续静默 > 此值（秒） → 干扰
 INTERFERENCE_MIN_DURATION         = 5.0   # 最短干扰持续时长（秒）
 INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
+INTERFERENCE_NO_KNOWLEDGE_THRESHOLD = 30.0    # 教师在场但知识点无推进持续阈值（秒）
+INTERFERENCE_NO_KNOWLEDGE_TEXT_SIM_THRESHOLD = 0.85  # 语义停滞相似度阈值
+INTERFERENCE_QA_PATTERN_ENABLED   = True      # 启用师生问答模式干扰检测
+INTERFERENCE_QA_MIN_SWITCHES      = 2         # 最少师生切换次数
+INTERFERENCE_QA_MAX_DURATION      = 60.0      # 单次师生问答最长时长（秒）
+INTERFERENCE_TEACHER_QA_CUES = ["你来回答", "这位同学", "请回答", "提问", "谁来说一下", "举手"]
 
 SEGMENT_MIN_DURATION = 20.0   # 最短保留片段（秒）
 SEGMENT_PADDING      = 1.0    # 片段首尾缓冲（秒）
