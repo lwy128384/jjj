@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import argparse
+import gc
 from pathlib import Path
 from tqdm import tqdm
 from text_simplifier import dump_json_simplified, simplify_text, simplify_video_name
@@ -284,23 +285,53 @@ def analyze_video_visual(video_path, output_dir, video_name):
     segment_last_ssim          = None
     static_person_last = None
 
+    def safe_read_at(frame_index, stage, retries=2):
+        nonlocal cap
+        for attempt in range(retries + 1):
+            try:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
+                ret, frm = cap.read()
+                if ret:
+                    return True, frm
+                if attempt >= retries:
+                    return False, None
+            except cv2.error as e:
+                msg = str(e)
+                is_oom = ("Insufficient memory" in msg) or ("OutOfMemoryError" in msg)
+                if not is_oom:
+                    raise
+                print(f"  警告: {stage}读取帧 {frame_index} 内存不足，尝试恢复 ({attempt + 1}/{retries + 1})")
+                gc.collect()
+
+            try:
+                cap.release()
+            except Exception:
+                pass
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                return False, None
+
+        return False, None
+
     # 预热背景模型
     print(f"  预热背景模型（{BG_INIT_FRAMES} 帧）…")
     for k in range(min(BG_INIT_FRAMES, total_samples)):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, k * sample_interval)
-        ret, frm = cap.read()
+        frame_no = k * sample_interval
+        ret, frm = safe_read_at(frame_no, "预热")
         if ret:
             bg.apply(frm, learningRate=0.1)
 
     # 逐帧分析
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     with tqdm(total=total_samples, desc="  分析进度", ncols=80, unit="帧") as pbar:
         for idx in range(total_samples):
             ts = round(idx / VISUAL_SAMPLE_FPS, 2)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx * sample_interval)
-            ret, frame = cap.read()
+            frame_no = idx * sample_interval
+            ret, frame = safe_read_at(frame_no, "分析")
             if not ret:
-                break
+                if frame_no >= max(total_frames - 1, 0):
+                    break
+                pbar.update(1)
+                continue
 
             # —— 教师存在检测 ——
             podium_crop = region_crop(frame, PODIUM_REGION)
