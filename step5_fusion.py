@@ -23,7 +23,6 @@ import subprocess
 import argparse
 import datetime
 import math
-import re
 from pathlib import Path
 
 # ============================================================
@@ -36,14 +35,6 @@ try:
     INTERFERENCE_LOW_SPEECH_RATIO     = _cfg.INTERFERENCE_LOW_SPEECH_RATIO
     INTERFERENCE_SILENCE_THRESHOLD    = _cfg.INTERFERENCE_SILENCE_THRESHOLD
     INTERFERENCE_MIN_DURATION         = _cfg.INTERFERENCE_MIN_DURATION
-    INTERFERENCE_NO_KNOWLEDGE_THRESHOLD = _cfg.INTERFERENCE_NO_KNOWLEDGE_THRESHOLD
-    INTERFERENCE_NO_KNOWLEDGE_TEXT_SIM_THRESHOLD = _cfg.INTERFERENCE_NO_KNOWLEDGE_TEXT_SIM_THRESHOLD
-    INTERFERENCE_QA_PATTERN_ENABLED   = _cfg.INTERFERENCE_QA_PATTERN_ENABLED
-    INTERFERENCE_QA_MIN_SWITCHES      = _cfg.INTERFERENCE_QA_MIN_SWITCHES
-    INTERFERENCE_QA_MAX_DURATION      = _cfg.INTERFERENCE_QA_MAX_DURATION
-    INTERFERENCE_TEACHER_QA_CUES      = _cfg.INTERFERENCE_TEACHER_QA_CUES
-    DIARIZATION_STUDENT_CUES          = _cfg.DIARIZATION_STUDENT_CUES
-    DIARIZATION_TEACHER_CUES          = _cfg.DIARIZATION_TEACHER_CUES
     SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
     SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
     INTERFERENCE_SEGMENT_TITLE        = _cfg.INTERFERENCE_SEGMENT_TITLE
@@ -53,14 +44,6 @@ except ImportError:
     INTERFERENCE_LOW_SPEECH_RATIO     = 0.80
     INTERFERENCE_SILENCE_THRESHOLD    = 15.0
     INTERFERENCE_MIN_DURATION         = 5.0
-    INTERFERENCE_NO_KNOWLEDGE_THRESHOLD = 30.0
-    INTERFERENCE_NO_KNOWLEDGE_TEXT_SIM_THRESHOLD = 0.85
-    INTERFERENCE_QA_PATTERN_ENABLED   = True
-    INTERFERENCE_QA_MIN_SWITCHES      = 2
-    INTERFERENCE_QA_MAX_DURATION      = 60.0
-    INTERFERENCE_TEACHER_QA_CUES      = ["你来回答", "这位同学", "请回答", "提问", "谁来说一下", "举手"]
-    DIARIZATION_STUDENT_CUES          = ["老师", "请问", "我想问", "是不是", "对吗", "为什么", "怎么"]
-    DIARIZATION_TEACHER_CUES          = ["同学们", "我们", "下面", "来看", "总结", "注意"]
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
     INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
@@ -92,8 +75,7 @@ SILENCE_THRESHOLD_MAX = 30.0
 
 def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
-    raw_name = Path(video_path).stem
-    name = raw_name.strip() or "未命名视频"
+    name = Path(video_path).stem
     out  = os.path.join(base, name)
     os.makedirs(out, exist_ok=True)
     return out, name
@@ -117,7 +99,6 @@ def load_multimodal_index(output_dir):
 
 def sanitize_filename(name):
     """去除 Windows 文件名非法字符，并截断"""
-    name = str(name)
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
     return name[:80].strip()
 
@@ -126,7 +107,7 @@ def normalize_knowledge_title(title, fallback_id=None):
     """
     去除历史命名中的“知识点N-”前缀，保留知识点名称主体。
     """
-    raw = str(title).strip()
+    raw = str(title or "").strip()
     cleaned = re.sub(r"^\s*知识点\s*\d+\s*[-_—:：]?\s*", "", raw)
     if cleaned:
         return cleaned
@@ -254,189 +235,6 @@ def _dynamic_interference_thresholds(multimodal_index):
     return absent_th, low_speech_th, silence_sec_th
 
 
-def _tokenize_for_jaccard(text):
-    if not text:
-        return set()
-    txt = str(text).lower().strip()
-    parts = re.findall(r"[\u4e00-\u9fff]|[a-z0-9_]+", txt)
-    return set(parts)
-
-
-def _jaccard_similarity(a, b):
-    ta = _tokenize_for_jaccard(a)
-    tb = _tokenize_for_jaccard(b)
-    if not ta and not tb:
-        return 1.0
-    inter = len(ta & tb)
-    union = max(len(ta | tb), 1)
-    return inter / union
-
-
-def _is_teacher_speaking(pt):
-    return (
-        bool(pt.get("teacher_present"))
-        and not bool(pt.get("is_silence"))
-        and str(pt.get("speaker", "")).strip() == "教师"
-    )
-
-
-def _knowledge_key(pt):
-    k_id = pt.get("knowledge_id")
-    k_title = str(pt.get("knowledge_title", "")).strip()
-    if k_id is None:
-        k_id = -1
-    return k_id, k_title
-
-
-def _is_no_knowledge_id(k_id):
-    if k_id is None:
-        return True
-    if isinstance(k_id, str):
-        s = k_id.strip().lower()
-        return s in {"", "0", "none", "null", "未知", "unknown"}
-    try:
-        return int(k_id) <= 0
-    except (TypeError, ValueError):
-        return False
-
-
-def _collect_no_knowledge_progress_interference(series):
-    """
-    规则4：教师在场连续讲话，但知识点长期不推进（或为空）且语义停滞。
-    """
-    if not series:
-        return []
-    segments = []
-    start_idx = None
-    base_key = None
-    text_sims = []
-    text_pairs = 0
-    prev_text = ""
-
-    def _flush(end_idx):
-        nonlocal start_idx, base_key, text_sims, text_pairs, prev_text
-        if start_idx is None or end_idx is None or end_idx < start_idx:
-            start_idx = None
-            base_key = None
-            text_sims = []
-            text_pairs = 0
-            prev_text = ""
-            return
-        st = float(series[start_idx]["time"])
-        ed = float(series[end_idx]["time"])
-        dur = ed - st
-        avg_sim = (sum(text_sims) / len(text_sims)) if text_sims else 1.0
-        k_id = base_key[0] if base_key else None
-        no_knowledge = _is_no_knowledge_id(k_id)
-        semantic_stagnant = (text_pairs == 0 and no_knowledge) or (avg_sim >= INTERFERENCE_NO_KNOWLEDGE_TEXT_SIM_THRESHOLD)
-        if dur >= INTERFERENCE_NO_KNOWLEDGE_THRESHOLD and semantic_stagnant:
-            segments.append({
-                "start": st,
-                "end": ed,
-                "duration": round(dur, 2),
-                "reasons": [f"教师在场但无知识点推进 {dur:.0f}s"],
-                "teacher_absent_ratio": 0.0,
-                "silence_ratio": 0.0,
-                "source": "no_knowledge_progress",
-            })
-        start_idx = None
-        base_key = None
-        text_sims = []
-        text_pairs = 0
-        prev_text = ""
-
-    for i, pt in enumerate(series):
-        if not _is_teacher_speaking(pt):
-            _flush(i - 1)
-            continue
-        cur_key = _knowledge_key(pt)
-        cur_text = str(pt.get("speech_text", "") or "").strip()
-        if start_idx is None:
-            start_idx = i
-            base_key = cur_key
-            prev_text = cur_text
-            continue
-        if cur_key != base_key:
-            _flush(i - 1)
-            start_idx = i
-            base_key = cur_key
-            prev_text = cur_text
-            continue
-        if prev_text and cur_text:
-            text_sims.append(_jaccard_similarity(prev_text, cur_text))
-            text_pairs += 1
-        prev_text = cur_text
-    _flush(len(series) - 1)
-    return segments
-
-
-def _collect_teacher_student_qa_interference(series):
-    """
-    规则5：师生说话人切换 + 问答 cue 词命中。
-    """
-    if not INTERFERENCE_QA_PATTERN_ENABLED or not series:
-        return []
-    teacher_cues = set(str(c).strip() for c in (list(DIARIZATION_TEACHER_CUES) + list(INTERFERENCE_TEACHER_QA_CUES)) if str(c).strip())
-    student_cues = set(str(c).strip() for c in DIARIZATION_STUDENT_CUES if str(c).strip())
-    valid_speakers = {"教师", "学生"}
-    points = [pt for pt in series if not pt.get("is_silence") and str(pt.get("speaker", "")).strip() in valid_speakers]
-    if not points:
-        return []
-
-    sessions = []
-    cur = [points[0]]
-    for pt in points[1:]:
-        if float(pt["time"]) - float(cur[-1]["time"]) <= 2.0:
-            cur.append(pt)
-        else:
-            sessions.append(cur)
-            cur = [pt]
-    sessions.append(cur)
-
-    interferences = []
-    for session in sessions:
-        if len(session) < 3:
-            continue
-        start = float(session[0]["time"])
-        end = float(session[-1]["time"])
-        dur = end - start
-        if dur <= 0 or dur > INTERFERENCE_QA_MAX_DURATION:
-            continue
-        switches = 0
-        prev_spk = str(session[0].get("speaker", "")).strip()
-        teacher_hit = False
-        student_hit = False
-        for pt in session:
-            spk = str(pt.get("speaker", "")).strip()
-            txt = str(pt.get("speech_text", "") or "")
-            if any(c in txt for c in teacher_cues):
-                teacher_hit = True
-            if any(c in txt for c in student_cues):
-                student_hit = True
-            if spk != prev_spk:
-                switches += 1
-                prev_spk = spk
-        has_t_s_t = False
-        for i in range(2, len(session)):
-            s0 = str(session[i - 2].get("speaker", "")).strip()
-            s1 = str(session[i - 1].get("speaker", "")).strip()
-            s2 = str(session[i].get("speaker", "")).strip()
-            if s0 == "教师" and s1 == "学生" and s2 == "教师":
-                has_t_s_t = True
-                break
-        if switches >= INTERFERENCE_QA_MIN_SWITCHES and teacher_hit and student_hit and has_t_s_t:
-            interferences.append({
-                "start": start,
-                "end": end,
-                "duration": round(dur, 2),
-                "reasons": [f"师生问答对话 {switches} 次"],
-                "teacher_absent_ratio": 0.0,
-                "silence_ratio": 0.0,
-                "source": "qa_dialogue",
-            })
-    return interferences
-
-
 def detect_interference(multimodal_index, model_times=None):
     """
     干扰规则（满足任一即标记）：
@@ -507,12 +305,6 @@ def detect_interference(multimodal_index, model_times=None):
             "silence_ratio": 0.0,
             "source": "model",
         })
-
-    # 规则4：教师在场但知识点无推进（语义空转）
-    interferences.extend(_collect_no_knowledge_progress_interference(series))
-
-    # 规则5：师生问答对话模式
-    interferences.extend(_collect_teacher_student_qa_interference(series))
 
     return _merge_interference_ranges(interferences)
 
@@ -585,15 +377,6 @@ def cut_segment(video_path, start, end, out_path):
     """ffmpeg 剪切片段，优先 stream copy（快），失败则重新编码"""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-    def _decode_subprocess_output(raw):
-        if raw is None:
-            return ""
-        if isinstance(raw, str):
-            return raw
-        if isinstance(raw, (bytes, bytearray)):
-            return raw.decode("utf-8", errors="replace")
-        return str(raw)
-
     # 快速模式：stream copy
     cmd_copy = [
         "ffmpeg", "-y",
@@ -603,7 +386,7 @@ def cut_segment(video_path, start, end, out_path):
         "-avoid_negative_ts", "1",
         str(out_path),
     ]
-    r = subprocess.run(cmd_copy, capture_output=True)
+    r = subprocess.run(cmd_copy, capture_output=True, text=True)
     if r.returncode == 0 and os.path.getsize(out_path) > 1024:
         return
 
@@ -618,10 +401,9 @@ def cut_segment(video_path, start, end, out_path):
         "-c:a", "aac", "-b:a", "128k",
         str(out_path),
     ]
-    r2 = subprocess.run(cmd_enc, capture_output=True)
+    r2 = subprocess.run(cmd_enc, capture_output=True, text=True)
     if r2.returncode != 0:
-        stderr_text = _decode_subprocess_output(r2.stderr)
-        raise RuntimeError(f"ffmpeg 剪切失败:\n{stderr_text[-600:]}")
+        raise RuntimeError(f"ffmpeg 剪切失败:\n{r2.stderr[-600:]}")
 
 
 # ============================================================

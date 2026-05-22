@@ -43,8 +43,7 @@ except ImportError:
 
 def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
-    raw_name = Path(video_path).stem
-    name = raw_name.strip() or "未命名视频"
+    name = Path(video_path).stem
     out  = os.path.join(base, name)
     os.makedirs(out, exist_ok=True)
     return out, name

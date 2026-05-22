@@ -71,20 +71,6 @@ except ImportError:
         "亚丽师多德": "亚里士多德",
         "低谱": "低谷",
         "图林": "图灵",
-        "這個": "这个",
-        "那個": "那个",
-        "一個": "一个",
-        "我們": "我们",
-        "你們": "你们",
-        "他們": "他们",
-        "什麼": "什么",
-        "怎麼": "怎么",
-        "為什麼": "为什么",
-        "哪裡": "哪里",
-        "進行": "进行",
-        "發生": "发生",
-        "紅顏色": "红颜色",
-        "規定": "规定",
     }
 
 MODEL_PREDICT_EXCEPTIONS = (
@@ -104,8 +90,7 @@ TIME_EPSILON = 1e-6
 
 def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
-    raw_name = Path(video_path).stem
-    name = raw_name.strip() or "未命名视频"
+    name = Path(video_path).stem
     out  = os.path.join(base, name)
     os.makedirs(out, exist_ok=True)
     return out, name
@@ -141,7 +126,6 @@ STOP_WORDS = {
     "很多", "非常", "比较", "可能", "已经", "通过", "进行", "使用",
     "方面", "方法", "问题", "情况", "内容", "过程", "就是", "其实",
     "现在", "时候", "地方", "东西", "感觉", "知道", "觉得", "认为",
-    "這個", "那個", "一個", "我們", "你們", "他們", "什麼", "怎麼", "為什麼", "哪裡",
 }
 
 
