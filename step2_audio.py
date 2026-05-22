@@ -24,7 +24,6 @@ import tempfile
 import re
 import numpy as np
 from pathlib import Path
-from text_simplifier import dump_json_simplified, simplify_text, simplify_video_name
 
 # ============================================================
 # 默认参数
@@ -126,7 +125,7 @@ except ImportError:
 def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
     raw_name = Path(video_path).stem
-    name = simplify_video_name(raw_name)
+    name = raw_name.strip() or "未命名视频"
     out  = os.path.join(base, name)
     os.makedirs(out, exist_ok=True)
     return out, name
@@ -191,7 +190,7 @@ def transcribe(audio_path):
             "id":               seg.id,
             "start":            round(float(seg.start), 2),
             "end":              round(float(seg.end),   2),
-            "text":             simplify_text(seg.text.strip()),
+            "text":             seg.text.strip(),
             "no_speech_prob":   round(float(seg.no_speech_prob), 4),
             "confidence":       round(conf, 4),
             "is_low_confidence": conf < SPEECH_CONFIDENCE_THRESHOLD,
@@ -715,7 +714,8 @@ def analyze_video_audio(video_path, output_dir, video_name):
         }
 
         out_file = os.path.join(output_dir, "audio_features.json")
-        result = dump_json_simplified(result, out_file)
+        with open(out_file, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
 
         print(f"\n  ✓ 语音分析完成")
         print(f"    有效片段: {len(valid_segs)}")

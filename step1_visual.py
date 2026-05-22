@@ -22,7 +22,6 @@ import argparse
 import gc
 from pathlib import Path
 from tqdm import tqdm
-from text_simplifier import dump_json_simplified, simplify_text, simplify_video_name
 
 # ============================================================
 # 默认参数（优先从 config.py 读取）
@@ -82,7 +81,7 @@ except ImportError:
 def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
     raw_name = Path(video_path).stem
-    name = simplify_video_name(raw_name)
+    name = raw_name.strip() or "未命名视频"
     out  = os.path.join(base, name)
     os.makedirs(out, exist_ok=True)
     return out, name
@@ -151,7 +150,7 @@ def run_ocr(reader, frame, region, min_conf):
         for _, t, c in results:
             clean = str(t).strip()
             if clean and c >= min_conf:
-                texts.append(simplify_text(clean))
+                texts.append(clean)
         
         if texts:
             result_text = " ".join(texts).strip()
@@ -174,7 +173,7 @@ def run_ocr(reader, frame, region, min_conf):
         for _, t, c in results:
             clean = str(t).strip()
             if clean and c >= relaxed:
-                texts.append(simplify_text(clean))
+                texts.append(clean)
         
         result_text = " ".join(texts).strip()
         if result_text:
@@ -454,7 +453,8 @@ def analyze_video_visual(video_path, output_dir, video_name):
     }
 
     out_file = os.path.join(output_dir, "visual_features.json")
-    result = dump_json_simplified(result, out_file)
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
 
     print(f"\n  ✓ 视觉分析完成")
     print(f"    教师在讲台: {result['stats']['teacher_presence_ratio']*100:.1f}%")

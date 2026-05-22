@@ -18,7 +18,6 @@ import json
 import argparse
 from bisect import bisect_right
 from pathlib import Path
-from text_simplifier import dump_json_simplified, load_json_simplified, simplify_video_name
 
 # ============================================================
 # 默认参数
@@ -45,7 +44,7 @@ except ImportError:
 def get_output_dir(video_path, base_output_dir=None):
     base = base_output_dir or OUTPUT_DIR
     raw_name = Path(video_path).stem
-    name = simplify_video_name(raw_name)
+    name = raw_name.strip() or "未命名视频"
     out  = os.path.join(base, name)
     os.makedirs(out, exist_ok=True)
     return out, name
@@ -54,7 +53,8 @@ def get_output_dir(video_path, base_output_dir=None):
 def _load(path, label):
     if not os.path.exists(path):
         return None
-    data = load_json_simplified(path)
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
     print(f"  已加载 {label}: {path}")
     return data
 
@@ -214,7 +214,8 @@ def align_features(video_path, output_dir, video_name):
     }
 
     out_file = os.path.join(output_dir, "multimodal_index.json")
-    result = dump_json_simplified(result, out_file)
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
 
     print(f"\n  ✓ 多模态对齐完成")
     print(f"    教师在讲台: {result['stats']['teacher_presence_ratio']*100:.1f}%")
