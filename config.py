@@ -127,6 +127,8 @@ STEP2_TEXT_CORRECTION_MAX_PINYIN_NORM_DIST = 0.22
 STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = 1
 STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = 1
 STEP2_TEXT_CORRECTION_CHAR_WEIGHT = 0.05
+# 转写字形统一（none / t2s / s2t）；默认将繁体统一转为简体
+STEP2_SCRIPT_CONVERSION_MODE = "t2s"
 
 # ============================================================
 # 步骤3 — 文本语义分析
