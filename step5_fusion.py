@@ -34,14 +34,7 @@ try:
     INTERFERENCE_TEACHER_ABSENT_RATIO = _cfg.INTERFERENCE_TEACHER_ABSENT_RATIO
     INTERFERENCE_LOW_SPEECH_RATIO     = _cfg.INTERFERENCE_LOW_SPEECH_RATIO
     INTERFERENCE_SILENCE_THRESHOLD    = _cfg.INTERFERENCE_SILENCE_THRESHOLD
-    INTERFERENCE_NO_KNOWLEDGE_THRESHOLD = _cfg.INTERFERENCE_NO_KNOWLEDGE_THRESHOLD
-    INTERFERENCE_NO_KNOWLEDGE_SIMILARITY = _cfg.INTERFERENCE_NO_KNOWLEDGE_SIMILARITY
     INTERFERENCE_MIN_DURATION         = _cfg.INTERFERENCE_MIN_DURATION
-    INTERFERENCE_QA_PATTERN_ENABLED   = _cfg.INTERFERENCE_QA_PATTERN_ENABLED
-    INTERFERENCE_QA_MIN_SWITCHES      = _cfg.INTERFERENCE_QA_MIN_SWITCHES
-    INTERFERENCE_QA_MAX_DURATION      = _cfg.INTERFERENCE_QA_MAX_DURATION
-    INTERFERENCE_TEACHER_QA_CUES      = list(_cfg.INTERFERENCE_TEACHER_QA_CUES)
-    DIARIZATION_STUDENT_CUES          = list(_cfg.DIARIZATION_STUDENT_CUES)
     SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
     SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
     INTERFERENCE_SEGMENT_TITLE        = _cfg.INTERFERENCE_SEGMENT_TITLE
@@ -50,17 +43,7 @@ except ImportError:
     INTERFERENCE_TEACHER_ABSENT_RATIO = 0.70
     INTERFERENCE_LOW_SPEECH_RATIO     = 0.80
     INTERFERENCE_SILENCE_THRESHOLD    = 15.0
-    INTERFERENCE_NO_KNOWLEDGE_THRESHOLD = 30.0
-    INTERFERENCE_NO_KNOWLEDGE_SIMILARITY = 0.85
     INTERFERENCE_MIN_DURATION         = 5.0
-    INTERFERENCE_QA_PATTERN_ENABLED   = True
-    INTERFERENCE_QA_MIN_SWITCHES      = 2
-    INTERFERENCE_QA_MAX_DURATION      = 60.0
-    INTERFERENCE_TEACHER_QA_CUES      = ["你来回答", "这位同学", "请回答", "提问", "谁来说一下", "举手"]
-    DIARIZATION_STUDENT_CUES          = [
-        "老师", "请问", "我想问", "是不是", "对吗", "为什么", "怎么",
-        "听不清", "没听懂", "可以再说", "啥意思",
-    ]
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
     INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
@@ -162,77 +145,6 @@ def _merge_source_labels(prev_source, cur_source):
     return "+".join(sorted(set([x for x in labels if x])))
 
 
-def _normalize_text(text):
-    return re.sub(r"\s+", " ", str(text or "").strip().lower())
-
-
-def _tokenize_for_jaccard(text):
-    txt = _normalize_text(text)
-    if not txt:
-        return set()
-    return set(re.findall(r"[\u4e00-\u9fff]|[a-z0-9_]+", txt))
-
-
-def _jaccard_similarity(a, b):
-    ta = _tokenize_for_jaccard(a)
-    tb = _tokenize_for_jaccard(b)
-    if not ta and not tb:
-        return 1.0
-    return len(ta & tb) / max(len(ta | tb), 1)
-
-
-def _collapse_unique_texts(points):
-    texts = []
-    for pt in points:
-        txt = _normalize_text(pt.get("speech_text", ""))
-        if txt and (not texts or txt != texts[-1]):
-            texts.append(txt)
-    return texts
-
-
-def _has_active_knowledge_at_time(knowledge_segments, t):
-    for seg in knowledge_segments:
-        if float(seg["start"]) - TIME_EPSILON <= t <= float(seg["end"]) + TIME_EPSILON:
-            return True
-    return False
-
-
-def _is_semantic_stagnant(points):
-    texts = _collapse_unique_texts(points)
-    if len(texts) <= 1:
-        return True
-    if any(pt.get("is_slide_transition") for pt in points):
-        return False
-    sims = [_jaccard_similarity(texts[i - 1], texts[i]) for i in range(1, len(texts))]
-    if not sims:
-        return False
-    return (sum(sims) / len(sims)) >= float(INTERFERENCE_NO_KNOWLEDGE_SIMILARITY)
-
-
-def _build_speaker_turns(series):
-    turns = []
-    current = None
-    for pt in series:
-        speaker = str(pt.get("speaker", "") or "").strip()
-        if pt.get("is_silence") or speaker not in {"教师", "学生"}:
-            current = None
-            continue
-        text = _normalize_text(pt.get("speech_text", ""))
-        t = float(pt.get("time", 0.0) or 0.0)
-        if current and current["speaker"] == speaker and t <= current["end"] + 1.0 + TIME_EPSILON:
-            current["end"] = t
-            if text and (not current["texts"] or text != current["texts"][-1]):
-                current["texts"].append(text)
-            continue
-        current = {"speaker": speaker, "start": t, "end": t, "texts": [text] if text else []}
-        turns.append(current)
-    return turns
-
-
-def _texts_hit_cues(texts, cues):
-    return any(cue in text for text in texts for cue in cues if cue)
-
-
 # ============================================================
 # 干扰检测
 # ============================================================
@@ -329,8 +241,6 @@ def detect_interference(multimodal_index, model_times=None):
       1. 某知识点段内教师缺席比例 > 阈值
       2. 某知识点段内静默比例 > 阈值
       3. 全局连续静默 > 阈值时长
-      4. 教师在场持续讲话，但真实知识点未推进
-      5. 教师↔学生问答/点名对话模式
     """
     series   = multimodal_index["time_series"]
     know_segs = multimodal_index["knowledge_segments"]
@@ -383,95 +293,6 @@ def detect_interference(multimodal_index, model_times=None):
                         "source":   "silence_scan",
                     })
                 sil_start = None
-
-    # 教师在场但无知识点推进：优先检测真实知识点空白区，避免误用 step4 的最近知识点映射
-    no_knowledge_start = None
-    no_knowledge_pts = []
-    for pt in series + [{"time": float(multimodal_index.get("duration", 0.0) or 0.0) + 1.0}]:
-        t = float(pt.get("time", 0.0) or 0.0)
-        is_teacher_talking = (
-            bool(pt.get("teacher_present"))
-            and not bool(pt.get("is_silence"))
-            and str(pt.get("speaker", "") or "") == "教师"
-        )
-        if is_teacher_talking:
-            if no_knowledge_start is None:
-                no_knowledge_start = t
-                no_knowledge_pts = []
-            no_knowledge_pts.append(pt)
-            continue
-
-        if no_knowledge_start is None:
-            continue
-
-        dur = t - no_knowledge_start
-        has_real_knowledge = any(
-            _has_active_knowledge_at_time(know_segs, float(p.get("time", 0.0) or 0.0))
-            for p in no_knowledge_pts
-        )
-        stable_knowledge_ids = {
-            p.get("knowledge_id")
-            for p in no_knowledge_pts
-            if p.get("knowledge_id") not in (None, "", "未知")
-        }
-        no_progress = not has_real_knowledge
-        if not no_progress and len(stable_knowledge_ids) <= 1 and not any(
-            p.get("is_knowledge_boundary") for p in no_knowledge_pts
-        ):
-            no_progress = _is_semantic_stagnant(no_knowledge_pts)
-
-        if dur >= float(INTERFERENCE_NO_KNOWLEDGE_THRESHOLD) and no_progress:
-            interferences.append({
-                "start": no_knowledge_start,
-                "end": t,
-                "duration": round(dur, 2),
-                "reasons": [f"教师在场但无知识点推进 {dur:.0f}s"],
-                "teacher_absent_ratio": 0.0,
-                "silence_ratio": 0.0,
-                "source": "no_knowledge_progress",
-            })
-        no_knowledge_start = None
-        no_knowledge_pts = []
-
-    # 师生问答/点名：检测教师↔学生说话人切换 + cue 词命中
-    if INTERFERENCE_QA_PATTERN_ENABLED:
-        turns = _build_speaker_turns(series)
-        min_switches = int(INTERFERENCE_QA_MIN_SWITCHES)
-        max_duration = float(INTERFERENCE_QA_MAX_DURATION)
-        for i in range(len(turns)):
-            participants = {turns[i]["speaker"]}
-            switches = 0
-            student_cue_hit = _texts_hit_cues(turns[i]["texts"], DIARIZATION_STUDENT_CUES) if turns[i]["speaker"] == "学生" else False
-            teacher_cue_hit = _texts_hit_cues(turns[i]["texts"], INTERFERENCE_TEACHER_QA_CUES) if turns[i]["speaker"] == "教师" else False
-            prev_speaker = turns[i]["speaker"]
-            start = turns[i]["start"]
-            end = turns[i]["end"]
-            for j in range(i + 1, len(turns)):
-                cur = turns[j]
-                if cur["start"] - end > 1.0 + TIME_EPSILON:
-                    break
-                if cur["end"] - start > max_duration:
-                    break
-                participants.add(cur["speaker"])
-                if cur["speaker"] != prev_speaker:
-                    switches += 1
-                    prev_speaker = cur["speaker"]
-                end = cur["end"]
-                if cur["speaker"] == "学生":
-                    student_cue_hit = student_cue_hit or _texts_hit_cues(cur["texts"], DIARIZATION_STUDENT_CUES)
-                else:
-                    teacher_cue_hit = teacher_cue_hit or _texts_hit_cues(cur["texts"], INTERFERENCE_TEACHER_QA_CUES)
-                if participants == {"教师", "学生"} and switches >= min_switches and student_cue_hit and teacher_cue_hit:
-                    interferences.append({
-                        "start": start,
-                        "end": end,
-                        "duration": round(end - start, 2),
-                        "reasons": [f"师生问答对话 {switches} 次"],
-                        "teacher_absent_ratio": 0.0,
-                        "silence_ratio": 0.0,
-                        "source": "qa_pattern",
-                    })
-                    break
 
     # 融合模型预测干扰
     for seg_s, seg_e in _build_model_interference_ranges(model_times or []):

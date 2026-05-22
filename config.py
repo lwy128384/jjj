@@ -166,13 +166,7 @@ TIME_RESOLUTION = 1.0          # 时间轴分辨率（秒）
 INTERFERENCE_TEACHER_ABSENT_RATIO = 0.70  # 教师缺席比例 > 此值 → 干扰
 INTERFERENCE_LOW_SPEECH_RATIO     = 0.80  # 静默/低音比例 > 此值 → 干扰
 INTERFERENCE_SILENCE_THRESHOLD    = 15.0  # 连续静默 > 此值（秒） → 干扰
-INTERFERENCE_NO_KNOWLEDGE_THRESHOLD = 30.0  # 教师在场持续讲话但无知识点推进 > 此值（秒）→ 干扰
-INTERFERENCE_NO_KNOWLEDGE_SIMILARITY = 0.85  # 稳定知识点下文本相似度高于此值 → 视为语义停滞
 INTERFERENCE_MIN_DURATION         = 5.0   # 最短干扰持续时长（秒）
-INTERFERENCE_QA_PATTERN_ENABLED   = True
-INTERFERENCE_QA_MIN_SWITCHES      = 2
-INTERFERENCE_QA_MAX_DURATION      = 60.0
-INTERFERENCE_TEACHER_QA_CUES      = ["你来回答", "这位同学", "请回答", "提问", "谁来说一下", "举手"]
 INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
 
 SEGMENT_MIN_DURATION = 20.0   # 最短保留片段（秒）
