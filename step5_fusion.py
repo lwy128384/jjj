@@ -158,6 +158,19 @@ def _format_clip_time_fields(clip):
     return {**clip, "start": start_hms, "end": end_hms, "duration": duration_sec}
 
 
+def _decode_subprocess_output(data):
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    for enc in ("utf-8", "gb18030", "gbk"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def _merge_source_labels(prev_source, cur_source):
     labels = str(prev_source).split("+") + str(cur_source).split("+")
     return "+".join(sorted(set([x for x in labels if x])))
@@ -570,7 +583,7 @@ def cut_segment(video_path, start, end, out_path):
         "-avoid_negative_ts", "1",
         str(out_path),
     ]
-    r = subprocess.run(cmd_copy, capture_output=True, text=True)
+    r = subprocess.run(cmd_copy, capture_output=True)
     if r.returncode == 0 and os.path.getsize(out_path) > 1024:
         return
 
@@ -585,9 +598,10 @@ def cut_segment(video_path, start, end, out_path):
         "-c:a", "aac", "-b:a", "128k",
         str(out_path),
     ]
-    r2 = subprocess.run(cmd_enc, capture_output=True, text=True)
+    r2 = subprocess.run(cmd_enc, capture_output=True)
     if r2.returncode != 0:
-        raise RuntimeError(f"ffmpeg 剪切失败:\n{r2.stderr[-600:]}")
+        err = _decode_subprocess_output(r2.stderr)
+        raise RuntimeError(f"ffmpeg 剪切失败:\n{err[-600:]}")
 
 
 # ============================================================

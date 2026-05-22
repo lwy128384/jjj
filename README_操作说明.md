@@ -558,7 +558,7 @@ venv\Scripts\activate
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |
 | `KEYWORD_TITLE_COUNT` | 2 | 标题拼接关键词数量 | 一般保持 2，过大易冗长 |
 | `KEYWORD_MIN_DOC_FREQ` | 2 | 关键词最小文档频次 | 调大可抑制偶发噪声词 |
-| `KEYWORD_BLACKLIST` | 见配置 | 关键词黑名单 | 可加入口语废词 |
+| `KEYWORD_BLACKLIST` | 见配置 | 关键词黑名单 | 建议同时加入繁/简口语废词（如“这个/這個”） |
 | `STEP3_DOMAIN_TERMS` | 见配置 | 领域词典 | 加入课程专业术语可提升分词质量 |
 | `STEP3_ENABLE_TEXT_NORMALIZATION` | True | 是否启用文本纠错替换 | ASR 错别词较多时建议开启 |
 | `STEP3_TEXT_REPLACE_MAP` | 见配置 | ASR 常见误识别替换表 | 按课程场景持续补充 |
