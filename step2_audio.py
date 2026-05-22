@@ -67,6 +67,7 @@ try:
     STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = _cfg.STEP2_TEXT_CORRECTION_MAX_CHAR_DIST
     STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = _cfg.STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF
     STEP2_TEXT_CORRECTION_CHAR_WEIGHT = _cfg.STEP2_TEXT_CORRECTION_CHAR_WEIGHT
+    STEP2_SCRIPT_CONVERSION_MODE = _cfg.STEP2_SCRIPT_CONVERSION_MODE
 except ImportError:
     OUTPUT_DIR                  = r"D:\video\output"
     WHISPER_MODEL_SIZE          = "base"
@@ -116,6 +117,7 @@ except ImportError:
     STEP2_TEXT_CORRECTION_MAX_CHAR_DIST = 1
     STEP2_TEXT_CORRECTION_MAX_LENGTH_DIFF = 1
     STEP2_TEXT_CORRECTION_CHAR_WEIGHT = 0.05
+    STEP2_SCRIPT_CONVERSION_MODE = "t2s"
 
 
 # ============================================================
@@ -208,6 +210,61 @@ def _should_keep_speech_segment(seg):
     if not (NO_SPEECH_IGNORE_WITH_TEXT and text):
         return False
     return len(text) > NO_SPEECH_TEXT_SHORT_LEN
+
+
+def normalize_transcription_script(segments):
+    mode = str(STEP2_SCRIPT_CONVERSION_MODE or "").strip().lower()
+    if mode in ("", "none", "off", "false"):
+        return segments, {
+            "enabled": False,
+            "mode": "none",
+            "status": "disabled",
+            "attempted_segments": len(segments),
+            "changed_segments": 0,
+        }
+    try:
+        import opencc
+    except ImportError:
+        print(
+            "  警告: 缺少 opencc-python-reimplemented，跳过简繁转换\n"
+            "    pip install opencc-python-reimplemented"
+        )
+        return segments, {
+            "enabled": False,
+            "mode": mode,
+            "status": "missing_opencc",
+            "attempted_segments": len(segments),
+            "changed_segments": 0,
+        }
+    try:
+        converter = opencc.OpenCC(mode)
+    except Exception as e:
+        print(f"  警告: STEP2_SCRIPT_CONVERSION_MODE={mode!r} 无效，跳过简繁转换（{e}）")
+        return segments, {
+            "enabled": False,
+            "mode": mode,
+            "status": "invalid_mode",
+            "attempted_segments": len(segments),
+            "changed_segments": 0,
+        }
+
+    changed_segments = 0
+    for seg in segments:
+        raw_text = str(seg.get("text", ""))
+        if not raw_text:
+            continue
+        new_text = converter.convert(raw_text)
+        if new_text != raw_text:
+            seg["text"] = new_text
+            changed_segments += 1
+    print(f"  文本字形统一({mode}): 命中 {changed_segments} 段")
+    return segments, {
+        "enabled": True,
+        "mode": mode,
+        "status": "ok",
+        "attempted_segments": len(segments),
+        "changed_segments": changed_segments,
+    }
 
 
 # ============================================================
@@ -677,6 +734,7 @@ def analyze_video_audio(video_path, output_dir, video_name):
         extract_audio(video_path, wav_path)
 
         segments, info = transcribe(wav_path)
+        segments, script_stats = normalize_transcription_script(segments)
         segments, correction_stats = correct_transcription_with_pinyin_fuzzy(segments)
 
         valid_segs = [s for s in segments if _should_keep_speech_segment(s)]
@@ -708,6 +766,7 @@ def analyze_video_audio(video_path, output_dir, video_name):
                     sum(s["end"] - s["start"] for s in valid_segs), 2),
                 "avg_confidence":       round(avg_conf, 4),
                 "low_confidence_count": sum(1 for s in segments if s["is_low_confidence"]),
+                "script_conversion":    script_stats,
                 "text_correction":      correction_stats,
             },
         }
