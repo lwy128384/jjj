@@ -558,12 +558,20 @@ venv\Scripts\activate
 | `MAX_KNOWLEDGE_DURATION` | 600 | 最长知识点（秒）| 增大可容纳长讲解 |
 | `KEYWORD_TITLE_COUNT` | 2 | 标题拼接关键词数量 | 一般保持 2，过大易冗长 |
 | `KEYWORD_MIN_DOC_FREQ` | 2 | 关键词最小文档频次 | 调大可抑制偶发噪声词 |
-| `KEYWORD_BLACKLIST` | 见配置 | 关键词黑名单 | 可加入口语废词 |
+| `KEYWORD_BLACKLIST` | 见配置 | 关键词黑名单 | 建议同时加入繁/简口语废词（如“这个/這個”） |
 | `STEP3_DOMAIN_TERMS` | 见配置 | 领域词典 | 加入课程专业术语可提升分词质量 |
 | `STEP3_ENABLE_TEXT_NORMALIZATION` | True | 是否启用文本纠错替换 | ASR 错别词较多时建议开启 |
 | `STEP3_TEXT_REPLACE_MAP` | 见配置 | ASR 常见误识别替换表 | 按课程场景持续补充 |
 | `INTERFERENCE_TEACHER_ABSENT_RATIO` | 0.70 | 教师缺席干扰阈值 | 增大可宽容更多缺席 |
+| `INTERFERENCE_LOW_SPEECH_RATIO` | 0.80 | 知识点内静默占比干扰阈值 | 增大可减少静默误删 |
 | `INTERFERENCE_SILENCE_THRESHOLD` | 15 | 连续静默判干扰（秒）| 增大忽略短休息 |
+| `INTERFERENCE_RULE_A_ENABLED` | True | 规则A开关：教师在场发言但非知识点 | 研讨互动多可关闭 |
+| `INTERFERENCE_RULE_A_MIN_DURATION` | 10 | 规则A最短持续时长（秒） | 增大可减少过渡语误判 |
+| `INTERFERENCE_RULE_B_ENABLED` | True | 规则B开关：师生问答互动判干扰 | 需要保留互动时可关闭 |
+| `INTERFERENCE_QA_MAX_DURATION` | 60 | 规则B问答组合最大时长（秒） | 减小可限制短问答片段 |
+| `INTERFERENCE_QA_MIN_TEXT_LEN` | 3 | 规则B关键词匹配最小文本长度 | 增大可降低ASR噪声触发 |
+| `INTERFERENCE_QUESTION_CUE_WORDS` | 见配置 | 教师提问触发词列表 | 按学科话术持续补充 |
+| `INTERFERENCE_ANSWER_CUE_WORDS` | 见配置 | 学生回答触发词列表 | 按课堂表达持续补充 |
 | `SEGMENT_MIN_DURATION` | 20 | 最短输出片段（秒）| 减小保留短内容 |
 
 ---

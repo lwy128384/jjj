@@ -35,6 +35,13 @@ try:
     INTERFERENCE_LOW_SPEECH_RATIO     = _cfg.INTERFERENCE_LOW_SPEECH_RATIO
     INTERFERENCE_SILENCE_THRESHOLD    = _cfg.INTERFERENCE_SILENCE_THRESHOLD
     INTERFERENCE_MIN_DURATION         = _cfg.INTERFERENCE_MIN_DURATION
+    INTERFERENCE_RULE_A_ENABLED       = _cfg.INTERFERENCE_RULE_A_ENABLED
+    INTERFERENCE_RULE_B_ENABLED       = _cfg.INTERFERENCE_RULE_B_ENABLED
+    INTERFERENCE_RULE_A_MIN_DURATION  = _cfg.INTERFERENCE_RULE_A_MIN_DURATION
+    INTERFERENCE_QA_MAX_DURATION      = _cfg.INTERFERENCE_QA_MAX_DURATION
+    INTERFERENCE_QA_MIN_TEXT_LEN      = _cfg.INTERFERENCE_QA_MIN_TEXT_LEN
+    INTERFERENCE_QUESTION_CUE_WORDS   = _cfg.INTERFERENCE_QUESTION_CUE_WORDS
+    INTERFERENCE_ANSWER_CUE_WORDS     = _cfg.INTERFERENCE_ANSWER_CUE_WORDS
     SEGMENT_MIN_DURATION              = _cfg.SEGMENT_MIN_DURATION
     SEGMENT_PADDING                   = _cfg.SEGMENT_PADDING
     INTERFERENCE_SEGMENT_TITLE        = _cfg.INTERFERENCE_SEGMENT_TITLE
@@ -44,6 +51,17 @@ except ImportError:
     INTERFERENCE_LOW_SPEECH_RATIO     = 0.80
     INTERFERENCE_SILENCE_THRESHOLD    = 15.0
     INTERFERENCE_MIN_DURATION         = 5.0
+    INTERFERENCE_RULE_A_ENABLED       = True
+    INTERFERENCE_RULE_B_ENABLED       = True
+    INTERFERENCE_RULE_A_MIN_DURATION  = 10.0
+    INTERFERENCE_QA_MAX_DURATION      = 60.0
+    INTERFERENCE_QA_MIN_TEXT_LEN      = 3
+    INTERFERENCE_QUESTION_CUE_WORDS   = [
+        "请回答", "你来", "这位同学", "什么问题", "怎么理解", "请你", "谁来说",
+    ]
+    INTERFERENCE_ANSWER_CUE_WORDS     = [
+        "我认为", "我觉得", "我的答案是", "我来回答", "我理解是", "我认为是",
+    ]
     SEGMENT_MIN_DURATION              = 20.0
     SEGMENT_PADDING                   = 1.0
     INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
@@ -138,6 +156,19 @@ def format_hms_floor_ceil(start_sec, end_sec):
 def _format_clip_time_fields(clip):
     start_hms, end_hms, duration_sec = format_hms_floor_ceil(clip["start"], clip["end"])
     return {**clip, "start": start_hms, "end": end_hms, "duration": duration_sec}
+
+
+def _decode_subprocess_output(data):
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    for enc in ("utf-8", "gb18030", "gbk"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
 
 
 def _merge_source_labels(prev_source, cur_source):
@@ -235,17 +266,163 @@ def _dynamic_interference_thresholds(multimodal_index):
     return absent_th, low_speech_th, silence_sec_th
 
 
+def _is_time_in_knowledge_segments(t, knowledge_segments):
+    t = float(t)
+    for ks in knowledge_segments:
+        if float(ks.get("start", 0.0)) <= t <= float(ks.get("end", 0.0)):
+            return True
+    return False
+
+
+def _scan_rule_a_non_knowledge_teacher_talk(series, knowledge_segments, min_duration, time_resolution):
+    interferences = []
+    streak_start = None
+    for pt in series:
+        t = float(pt.get("time", 0.0))
+        cond = (
+            bool(pt.get("teacher_present", False))
+            and not bool(pt.get("is_silence", True))
+            and str(pt.get("speaker", "")).strip() == "教师"
+            and not _is_time_in_knowledge_segments(t, knowledge_segments)
+        )
+        if cond:
+            if streak_start is None:
+                streak_start = t
+        elif streak_start is not None:
+            dur = t - streak_start
+            if dur >= float(min_duration):
+                interferences.append({
+                    "start": streak_start,
+                    "end": t,
+                    "duration": round(dur, 2),
+                    "reasons": ["教师闲聊/过渡语（非知识点内容）"],
+                    "teacher_absent_ratio": 0.0,
+                    "silence_ratio": 0.0,
+                    "source": "teacher_non_knowledge_talk",
+                })
+            streak_start = None
+    if streak_start is not None and series:
+        last_end = float(series[-1].get("time", 0.0)) + float(time_resolution)
+        dur = last_end - streak_start
+        if dur >= float(min_duration):
+            interferences.append({
+                "start": streak_start,
+                "end": last_end,
+                "duration": round(dur, 2),
+                "reasons": ["教师闲聊/过渡语（非知识点内容）"],
+                "teacher_absent_ratio": 0.0,
+                "silence_ratio": 0.0,
+                "source": "teacher_non_knowledge_talk",
+            })
+    return interferences
+
+
+def _build_speaker_turns(series, time_resolution):
+    turns = []
+    cur = None
+    for pt in series:
+        speaker = str(pt.get("speaker", "")).strip()
+        if bool(pt.get("is_silence", True)) or speaker not in ("教师", "学生"):
+            if cur is not None:
+                turns.append(cur)
+                cur = None
+            continue
+        t = float(pt.get("time", 0.0))
+        text = str(pt.get("speech_text", "") or "").strip()
+        if cur is None or cur["speaker"] != speaker or t > cur["end"] + TIME_EPSILON:
+            if cur is not None:
+                turns.append(cur)
+            cur = {
+                "speaker": speaker,
+                "start": t,
+                "end": t + float(time_resolution),
+                "texts": [],
+            }
+        else:
+            cur["end"] = max(cur["end"], t + float(time_resolution))
+        if text and (not cur["texts"] or cur["texts"][-1] != text):
+            cur["texts"].append(text)
+    if cur is not None:
+        turns.append(cur)
+    return turns
+
+
+def _contains_cue(texts, cue_words, min_text_len):
+    for txt in texts:
+        stripped = str(txt or "").strip()
+        if len(stripped) < int(min_text_len):
+            continue
+        if any(cue in stripped for cue in cue_words):
+            return True
+    return False
+
+
+def _scan_rule_b_teacher_student_qa(series, qa_max_duration, question_cues, answer_cues,
+                                    min_text_len, time_resolution):
+    interferences = []
+    turns = _build_speaker_turns(series, time_resolution)
+    i = 0
+    while i < len(turns) - 1:
+        t1 = turns[i]
+        t2 = turns[i + 1]
+        if not (t1["speaker"] == "教师" and t2["speaker"] == "学生"):
+            i += 1
+            continue
+
+        start = t1["start"]
+        end = t2["end"]
+        use_t3 = False
+        if i + 2 < len(turns):
+            t3 = turns[i + 2]
+            if t3["speaker"] in ("教师", "学生") and t3["start"] <= t2["end"] + float(time_resolution) + TIME_EPSILON:
+                cand_end = t3["end"]
+                if cand_end - start <= float(qa_max_duration):
+                    end = cand_end
+                    use_t3 = True
+
+        dur = end - start
+        if dur > float(qa_max_duration):
+            i += 1
+            continue
+
+        teacher_texts = list(t1.get("texts", []))
+        student_texts = list(t2.get("texts", []))
+        if use_t3:
+            if t3["speaker"] == "教师":
+                teacher_texts.extend(t3.get("texts", []))
+            else:
+                student_texts.extend(t3.get("texts", []))
+
+        teacher_hit = _contains_cue(teacher_texts, question_cues, min_text_len)
+        student_hit = _contains_cue(student_texts, answer_cues, min_text_len)
+        if teacher_hit or student_hit:
+            interferences.append({
+                "start": round(start, 2),
+                "end": round(end, 2),
+                "duration": round(dur, 2),
+                "reasons": ["师生问答互动"],
+                "teacher_absent_ratio": 0.0,
+                "silence_ratio": 0.0,
+                "source": "teacher_student_qa",
+            })
+        i += 1
+    return interferences
+
+
 def detect_interference(multimodal_index, model_times=None):
     """
     干扰规则（满足任一即标记）：
       1. 某知识点段内教师缺席比例 > 阈值
       2. 某知识点段内静默比例 > 阈值
       3. 全局连续静默 > 阈值时长
+      4. 规则A：教师在场+教师发言+不在知识点区间，持续超过阈值
+      5. 规则B：教师→学生（→教师/学生）短时问答模式，命中问答关键词
     """
     series   = multimodal_index["time_series"]
     know_segs = multimodal_index["knowledge_segments"]
     interferences = []
     absent_th, low_speech_th, silence_sec_th = _dynamic_interference_thresholds(multimodal_index)
+    time_resolution = float(multimodal_index.get("time_resolution", 1.0) or 1.0)
 
     # 按知识点段分析
     for ks in know_segs:
@@ -293,6 +470,26 @@ def detect_interference(multimodal_index, model_times=None):
                         "source":   "silence_scan",
                     })
                 sil_start = None
+
+    # 规则A：教师在场且发言，但不在任何知识点区间
+    if INTERFERENCE_RULE_A_ENABLED:
+        interferences.extend(_scan_rule_a_non_knowledge_teacher_talk(
+            series=series,
+            knowledge_segments=know_segs,
+            min_duration=INTERFERENCE_RULE_A_MIN_DURATION,
+            time_resolution=time_resolution,
+        ))
+
+    # 规则B：教师点名提问 + 学生回答的问答互动
+    if INTERFERENCE_RULE_B_ENABLED:
+        interferences.extend(_scan_rule_b_teacher_student_qa(
+            series=series,
+            qa_max_duration=INTERFERENCE_QA_MAX_DURATION,
+            question_cues=INTERFERENCE_QUESTION_CUE_WORDS,
+            answer_cues=INTERFERENCE_ANSWER_CUE_WORDS,
+            min_text_len=INTERFERENCE_QA_MIN_TEXT_LEN,
+            time_resolution=time_resolution,
+        ))
 
     # 融合模型预测干扰
     for seg_s, seg_e in _build_model_interference_ranges(model_times or []):
@@ -386,7 +583,7 @@ def cut_segment(video_path, start, end, out_path):
         "-avoid_negative_ts", "1",
         str(out_path),
     ]
-    r = subprocess.run(cmd_copy, capture_output=True, text=True)
+    r = subprocess.run(cmd_copy, capture_output=True)
     if r.returncode == 0 and os.path.getsize(out_path) > 1024:
         return
 
@@ -401,9 +598,10 @@ def cut_segment(video_path, start, end, out_path):
         "-c:a", "aac", "-b:a", "128k",
         str(out_path),
     ]
-    r2 = subprocess.run(cmd_enc, capture_output=True, text=True)
+    r2 = subprocess.run(cmd_enc, capture_output=True)
     if r2.returncode != 0:
-        raise RuntimeError(f"ffmpeg 剪切失败:\n{r2.stderr[-600:]}")
+        err = _decode_subprocess_output(r2.stderr)
+        raise RuntimeError(f"ffmpeg 剪切失败:\n{err[-600:]}")
 
 
 # ============================================================
