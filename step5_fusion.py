@@ -158,6 +158,27 @@ def _format_clip_time_fields(clip):
     return {**clip, "start": start_hms, "end": end_hms, "duration": duration_sec}
 
 
+def _format_clip_for_index(clip):
+    """
+    格式化 clip 时间字段，兼容多片段合并的情况：
+    - 普通单片段：与 _format_clip_time_fields 行为一致。
+    - 多片段合并：start/end 显示首尾范围，duration 取各 part 之和，
+      并对 parts 列表中的每个子区间也做时间格式化。
+    """
+    if "parts" in clip and clip["parts"]:
+        parts = clip["parts"]
+        start_hms, _, _ = format_hms_floor_ceil(parts[0]["start"], parts[0]["end"])
+        _, end_hms, _   = format_hms_floor_ceil(parts[-1]["start"], parts[-1]["end"])
+        total_dur = int(sum(p.get("duration", 0) for p in parts))
+        parts_fmt = []
+        for p in parts:
+            ps, pe, pd = format_hms_floor_ceil(p["start"], p["end"])
+            parts_fmt.append({"start": ps, "end": pe, "duration": pd})
+        return {**clip, "start": start_hms, "end": end_hms, "duration": total_dur,
+                "parts": parts_fmt}
+    return _format_clip_time_fields(clip)
+
+
 def _decode_subprocess_output(data):
     if data is None:
         return ""
@@ -604,6 +625,50 @@ def cut_segment(video_path, start, end, out_path):
         raise RuntimeError(f"ffmpeg 剪切失败:\n{err[-600:]}")
 
 
+def concat_video_parts(part_paths, out_path):
+    """
+    使用 ffmpeg concat demuxer 将多个视频片段（stream copy）拼接为一个文件。
+    所有片段需来自同一源视频（编码一致），否则自动降级为重新编码拼接。
+    """
+    list_file = str(out_path) + ".concat_list.txt"
+    try:
+        with open(list_file, "w", encoding="utf-8") as f:
+            for p in part_paths:
+                safe_p = str(p).replace("\\", "/").replace("'", "\\'")
+                f.write(f"file '{safe_p}'\n")
+
+        # 优先 stream copy（快）
+        cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", list_file,
+            "-c", "copy",
+            str(out_path),
+        ]
+        r = subprocess.run(cmd, capture_output=True)
+        if r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
+            return
+
+        # 降级：重新编码拼接
+        print(f"    concat stream copy 失败，改用重新编码…")
+        cmd_enc = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", list_file,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            str(out_path),
+        ]
+        r2 = subprocess.run(cmd_enc, capture_output=True)
+        if r2.returncode != 0:
+            err = _decode_subprocess_output(r2.stderr)
+            raise RuntimeError(f"ffmpeg 合并失败:\n{err[-600:]}")
+    finally:
+        if os.path.exists(list_file):
+            try:
+                os.remove(list_file)
+            except OSError:
+                pass
+
+
 # ============================================================
 # 核心融合
 # ============================================================
@@ -651,39 +716,125 @@ def fuse_and_cut(video_path, output_dir, video_name):
     commands, dropped_as_interference = build_edit_commands(know_segs, interferences, duration)
     print(f"  有效片段: {len(commands)} 个")
 
-    # 剪切视频
+    # 剪切视频（同名知识点自动合并）
     seg_dir = os.path.join(output_dir, "segments")
     os.makedirs(seg_dir, exist_ok=True)
 
-    clips = []
+    # 按标题分组（保持首次出现顺序），每组内按时间升序
+    title_groups = {}
+    title_order = []
     for cmd in commands:
-        fname    = sanitize_filename(cmd["title"]) + ".mp4"
-        out_path = os.path.join(seg_dir, fname)
-        print(f"  剪切 [{cmd['start']:.0f}s–{cmd['end']:.0f}s] → {fname}")
-        try:
-            cut_segment(video_path, cmd["start"], cmd["end"], out_path)
-            file_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
-            clips.append({
-                "id":           cmd["id"],
-                "title":        cmd["title"],
-                "start":        cmd["start"],
-                "end":          cmd["end"],
-                "duration":     cmd["duration"],
-                "output_file":  out_path,
-                "file_size_mb": round(file_size / 1024 / 1024, 2),
-                "keywords":     cmd["keywords"],
-                "status":       "ok",
-            })
-        except Exception as e:
-            print(f"    ✗ 剪切失败: {e}")
-            clips.append({
-                "id":    cmd["id"],
-                "title": cmd["title"],
-                "start": cmd["start"],
-                "end":   cmd["end"],
-                "status": "failed",
-                "error":  str(e),
-            })
+        t = cmd["title"]
+        if t not in title_groups:
+            title_groups[t] = []
+            title_order.append(t)
+        title_groups[t].append(cmd)
+    for t in title_order:
+        title_groups[t].sort(key=lambda c: c["start"])
+
+    clips = []
+    for title in title_order:
+        group_cmds = title_groups[title]
+        fname     = sanitize_filename(title) + ".mp4"
+        final_out = os.path.join(seg_dir, fname)
+
+        if len(group_cmds) == 1:
+            # 单片段：直接剪切（原有行为）
+            cmd = group_cmds[0]
+            print(f"  剪切 [{cmd['start']:.0f}s–{cmd['end']:.0f}s] → {fname}")
+            try:
+                cut_segment(video_path, cmd["start"], cmd["end"], final_out)
+                file_size = os.path.getsize(final_out) if os.path.exists(final_out) else 0
+                clips.append({
+                    "id":           cmd["id"],
+                    "title":        title,
+                    "start":        cmd["start"],
+                    "end":          cmd["end"],
+                    "duration":     cmd["duration"],
+                    "output_file":  final_out,
+                    "file_size_mb": round(file_size / 1024 / 1024, 2),
+                    "keywords":     cmd["keywords"],
+                    "status":       "ok",
+                })
+            except Exception as e:
+                print(f"    ✗ 剪切失败: {e}")
+                clips.append({
+                    "id":    cmd["id"],
+                    "title": title,
+                    "start": cmd["start"],
+                    "end":   cmd["end"],
+                    "status": "failed",
+                    "error":  str(e),
+                })
+        else:
+            # 多片段：先分别剪切到临时文件，再拼接
+            print(f"  合并 {len(group_cmds)} 个同名片段「{title}」→ {fname}")
+            part_paths = []
+            parts_info = []
+            cut_failed = False
+            for pi, cmd in enumerate(group_cmds):
+                part_fname = sanitize_filename(title) + f"_part{pi + 1}.mp4"
+                part_out   = os.path.join(seg_dir, part_fname)
+                print(f"    剪切 part{pi + 1} [{cmd['start']:.0f}s–{cmd['end']:.0f}s]")
+                try:
+                    cut_segment(video_path, cmd["start"], cmd["end"], part_out)
+                    part_paths.append(part_out)
+                    parts_info.append({
+                        "start":    cmd["start"],
+                        "end":      cmd["end"],
+                        "duration": cmd["duration"],
+                    })
+                except Exception as e:
+                    print(f"    ✗ part{pi + 1} 剪切失败: {e}")
+                    cut_failed = True
+                    break
+
+            if not cut_failed and part_paths:
+                try:
+                    concat_video_parts(part_paths, final_out)
+                    for pp in part_paths:
+                        try:
+                            os.remove(pp)
+                        except OSError:
+                            pass
+                    file_size = os.path.getsize(final_out) if os.path.exists(final_out) else 0
+                    total_dur = round(sum(p["duration"] for p in parts_info), 2)
+                    clips.append({
+                        "id":           group_cmds[0]["id"],
+                        "title":        title,
+                        "start":        group_cmds[0]["start"],
+                        "end":          group_cmds[-1]["end"],
+                        "duration":     total_dur,
+                        "parts":        parts_info,
+                        "output_file":  final_out,
+                        "file_size_mb": round(file_size / 1024 / 1024, 2),
+                        "keywords":     group_cmds[0]["keywords"],
+                        "status":       "ok",
+                    })
+                except Exception as e:
+                    print(f"    ✗ 合并失败: {e}")
+                    clips.append({
+                        "id":    group_cmds[0]["id"],
+                        "title": title,
+                        "start": group_cmds[0]["start"],
+                        "end":   group_cmds[-1]["end"],
+                        "status": "failed",
+                        "error":  str(e),
+                    })
+            else:
+                for pp in part_paths:
+                    try:
+                        os.remove(pp)
+                    except OSError:
+                        pass
+                clips.append({
+                    "id":    group_cmds[0]["id"],
+                    "title": title,
+                    "start": group_cmds[0]["start"],
+                    "end":   group_cmds[-1]["end"],
+                    "status": "failed",
+                    "error":  "部分片段剪切失败，跳过合并",
+                })
 
     # 汇总 removed 片段
     removed = []
@@ -699,7 +850,7 @@ def fuse_and_cut(video_path, output_dir, video_name):
         })
     removed.extend(dropped_as_interference)
 
-    clips_for_index = [_format_clip_time_fields(c) for c in clips]
+    clips_for_index = [_format_clip_for_index(c) for c in clips]
     final_index = {
         "video_name":       video_name,
         "video_path":       str(video_path),

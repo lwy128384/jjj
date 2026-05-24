@@ -641,6 +641,124 @@ def evaluate(video_path, annotation_path):
 
 
 # ============================================================
+# 标注导出（同名片段合并）
+# ============================================================
+
+def export_annotated_clips(video_path, annotation_path, seg_dir=None):
+    """
+    根据标注文件直接导出知识点视频，同名知识点片段自动合并为一个文件。
+
+    适用场景：
+      1. 手工标注 JSON 中同一知识点被干扰段分开（两条同名条目）；
+      2. 希望跳过流水线直接从标注切片。
+
+    参数：
+      video_path       : 视频文件路径
+      annotation_path  : 标注 JSON 路径（同 train.py 格式）
+      seg_dir          : 输出目录，默认 <output_dir>/annotated_segments/
+
+    返回：
+      list[dict]  每个知识点的导出结果（title / output_file / status / error）
+    """
+    try:
+        from step5_fusion import (
+            cut_segment, concat_video_parts,
+            sanitize_filename, check_ffmpeg,
+        )
+    except ImportError as exc:
+        raise RuntimeError("需要 step5_fusion.py 才能导出视频") from exc
+
+    if not check_ffmpeg():
+        raise RuntimeError(
+            "未找到 ffmpeg！\n"
+            "Windows 安装：\n"
+            "  1. 下载 https://www.gyan.dev/ffmpeg/builds/\n"
+            "  2. 解压到 C:\\ffmpeg\n"
+            "  3. 将 C:\\ffmpeg\\bin 加入系统 PATH"
+        )
+
+    out_dir, _ = get_output_dir(video_path)
+    if seg_dir is None:
+        seg_dir = os.path.join(out_dir, "annotated_segments")
+    os.makedirs(seg_dir, exist_ok=True)
+
+    ann         = load_json(annotation_path)
+    annotations = normalize_annotations(ann.get("annotations", []))
+    knowledge   = [a for a in annotations if not a["is_interference"]]
+
+    if not knowledge:
+        print("  标注中无知识点片段")
+        return []
+
+    # 按标题分组，组内按时间升序
+    title_groups = {}
+    title_order  = []
+    for a in sorted(knowledge, key=lambda x: x["start"]):
+        t = a["title"] or "未命名"
+        if t not in title_groups:
+            title_groups[t] = []
+            title_order.append(t)
+        title_groups[t].append(a)
+
+    results = []
+    for title in title_order:
+        group = title_groups[title]
+        fname     = sanitize_filename(title) + ".mp4"
+        final_out = os.path.join(seg_dir, fname)
+
+        if len(group) == 1:
+            a = group[0]
+            print(f"  导出 [{a['start']}s–{a['end']}s] → {fname}")
+            try:
+                cut_segment(video_path, a["start"], a["end"], final_out)
+                results.append({"title": title, "output_file": final_out, "status": "ok"})
+            except Exception as e:
+                print(f"    ✗ 失败: {e}")
+                results.append({"title": title, "status": "failed", "error": str(e)})
+        else:
+            print(f"  合并 {len(group)} 个同名片段「{title}」→ {fname}")
+            part_paths  = []
+            cut_failed  = False
+            for pi, a in enumerate(group):
+                part_fname = sanitize_filename(title) + f"_part{pi + 1}.mp4"
+                part_out   = os.path.join(seg_dir, part_fname)
+                print(f"    剪切 part{pi + 1} [{a['start']}s–{a['end']}s]")
+                try:
+                    cut_segment(video_path, a["start"], a["end"], part_out)
+                    part_paths.append(part_out)
+                except Exception as e:
+                    print(f"    ✗ part{pi + 1} 失败: {e}")
+                    cut_failed = True
+                    break
+
+            if not cut_failed and part_paths:
+                try:
+                    concat_video_parts(part_paths, final_out)
+                    for pp in part_paths:
+                        try:
+                            os.remove(pp)
+                        except OSError:
+                            pass
+                    results.append({"title": title, "output_file": final_out, "status": "ok"})
+                except Exception as e:
+                    print(f"    ✗ 合并失败: {e}")
+                    results.append({"title": title, "status": "failed", "error": str(e)})
+            else:
+                for pp in part_paths:
+                    try:
+                        os.remove(pp)
+                    except OSError:
+                        pass
+                results.append({
+                    "title": title,
+                    "status": "failed",
+                    "error": "部分片段剪切失败，跳过合并",
+                })
+
+    return results
+
+
+# ============================================================
 # 入口
 # ============================================================
 
@@ -654,6 +772,8 @@ def main():
                         help="批量标注目录（每个 .json 对应同名视频）")
     parser.add_argument("--eval",            action="store_true",
                         help="只评估，不训练")
+    parser.add_argument("--export",          action="store_true",
+                        help="根据标注直接导出知识点视频，同名片段自动合并（不训练模型）")
     args = parser.parse_args()
 
     if args.eval:
@@ -661,6 +781,20 @@ def main():
             print("评估模式需要提供 --video 和 --annotation")
             sys.exit(1)
         evaluate(args.video, args.annotation)
+        return
+
+    if args.export:
+        if not (args.video and args.annotation):
+            print("导出模式需要提供 --video 和 --annotation")
+            sys.exit(1)
+        print(f"\n[标注导出] 视频: {args.video}")
+        results = export_annotated_clips(args.video, args.annotation)
+        ok_count = sum(1 for r in results if r["status"] == "ok")
+        print(f"\n导出完成！成功 {ok_count}/{len(results)} 个知识点")
+        for r in results:
+            mark = "✓" if r["status"] == "ok" else "✗"
+            detail = r.get("output_file", r.get("error", ""))
+            print(f"  {mark} {r['title']}: {detail}")
         return
 
     # 收集训练数据
