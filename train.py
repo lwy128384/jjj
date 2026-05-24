@@ -9,7 +9,15 @@
     "annotations": [
       {"start": "0:00:00", "end": "0:03:00", "title": "第一章绪论",  "is_interference": false},
       {"start": "0:03:00", "end": "0:03:30", "title": "课间休息",    "is_interference": true},
-      {"start": "0:03:30", "end": "0:06:40", "title": "第一节基本概念","is_interference": false}
+      {"start": "0:03:30", "end": "0:06:40", "title": "第一节基本概念","is_interference": false},
+      {
+        "title": "同一知识点分段",
+        "is_interference": false,
+        "ranges": [
+          {"start": "0:10:00", "end": "0:11:30"},
+          {"start": "0:12:10", "end": "0:13:20"}
+        ]
+      }
     ]
   }
 
@@ -142,32 +150,50 @@ def _combine_point_text(pt):
     return f"{pt.get('speech_text', '') or ''} {pt.get('ppt_text', '') or ''}".strip()
 
 
+def _iter_annotation_ranges(ann):
+    """
+    向后兼容：
+    - 旧格式: start/end
+    - 新格式: ranges=[{start,end}, ...]
+    """
+    ranges = ann.get("ranges")
+    if isinstance(ranges, list) and ranges:
+        for r in ranges:
+            if not isinstance(r, dict):
+                continue
+            yield r.get("start"), r.get("end")
+        return
+    yield ann.get("start"), ann.get("end")
+
+
 def normalize_annotations(annotations):
     """
     统一标注结构，兼容“仅知识点标注”场景：
     - 只标知识点：其余时间自动视为干扰候选
     - 显式标注 is_interference 时优先保留
+    - 支持单条标注包含多个分段 ranges
     """
     normalized = []
     for ann in annotations or []:
-        s = _parse_time_seconds(ann.get("start"), None)
-        e = _parse_time_seconds(ann.get("end"), None)
-        if s is None or e is None:
-            continue
-        if e < s:
-            s, e = e, s
-        s = math.floor(s)
-        e = math.ceil(e)
-        if e - s <= 1e-6:
-            continue
         is_intf = bool(ann.get("is_interference", False))
         title = str(ann.get("title", "") or "").strip()
-        normalized.append({
-            "start": s,
-            "end": e,
-            "title": title,
-            "is_interference": is_intf,
-        })
+        for raw_s, raw_e in _iter_annotation_ranges(ann):
+            s = _parse_time_seconds(raw_s, None)
+            e = _parse_time_seconds(raw_e, None)
+            if s is None or e is None:
+                continue
+            if e < s:
+                s, e = e, s
+            s = math.floor(s)
+            e = math.ceil(e)
+            if e - s <= 1e-6:
+                continue
+            normalized.append({
+                "start": s,
+                "end": e,
+                "title": title,
+                "is_interference": is_intf,
+            })
     return normalized
 
 

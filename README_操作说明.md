@@ -392,14 +392,22 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
       "end": "0:12:00",
       "title": "第二节极限定义",
       "is_interference": false
+    },
+    {
+      "title": "同一知识点（被干扰打断）",
+      "is_interference": false,
+      "ranges": [
+        {"start": "0:12:30", "end": "0:14:00"},
+        {"start": "0:14:20", "end": "0:15:10"}
+      ]
     }
   ]
 }
 ```
 
 字段说明：
-- `start` / `end`：片段时间戳（`H:MM:SS`，例如 `0:30:00`）
-- `duration`：秒级数字，按 `floor(start秒)` 与 `ceil(end秒)` 后相减得到
+- `start` / `end`：单段时间戳（`H:MM:SS`，例如 `0:30:00`）
+- `ranges`：可选；多段时间戳列表，格式为 `[{start,end}, ...]`，用于同一知识点被打断的场景
 - `title`：知识点名称
 - `is_interference`：可选；`true` = 显式干扰片段
 
@@ -641,6 +649,16 @@ venv\Scripts\activate
       "duration": 238,
       "output_file": "D:\\video\\output\\xxx\\segments\\极限_定义.mp4",
       "keywords": ["极限", "定义"]
+    }
+  ],
+  "grouped_clips": [
+    {
+      "group_id": 0,
+      "title": "极限_定义",
+      "total_parts": 2,
+      "total_output_parts": 2,
+      "total_duration_s": 260,
+      "parts": [{ "...": "同 clips 中的片段对象" }]
     }
   ],
   "removed_segments": [
