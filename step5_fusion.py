@@ -12,7 +12,7 @@
 
 输出:
   D:/video/output/example/segments/知识点1-xxx.mp4  …
-  D:/video/output/example/final_index.json（含 clips 与 grouped_clips）
+  D:/video/output/example/final_index.json
 """
 
 import os
@@ -156,38 +156,6 @@ def format_hms_floor_ceil(start_sec, end_sec):
 def _format_clip_time_fields(clip):
     start_hms, end_hms, duration_sec = format_hms_floor_ceil(clip["start"], clip["end"])
     return {**clip, "start": start_hms, "end": end_hms, "duration": duration_sec}
-
-
-def build_grouped_clips(clips):
-    """
-    将同标题片段聚合为一个逻辑知识点分组（JSON 层拼接信息）。
-    不改变原 clips 输出，仅新增 grouped_clips 供下游选择使用。
-    """
-    groups_by_title = {}
-    grouped = []
-    for clip in clips:
-        title = str(clip.get("title", "") or "未命名片段")
-        group = groups_by_title.get(title)
-        if group is None:
-            group = {
-                "group_id": len(grouped),
-                "title": title,
-                "total_parts": 0,
-                "total_output_parts": 0,
-                "total_duration_s": 0,
-                "parts": [],
-            }
-            groups_by_title[title] = group
-            grouped.append(group)
-        group["parts"].append(clip)
-        group["total_parts"] += 1
-        if clip.get("status") == "ok":
-            group["total_output_parts"] += 1
-            try:
-                group["total_duration_s"] += int(clip.get("duration", 0) or 0)
-            except (TypeError, ValueError):
-                pass
-    return grouped
 
 
 def _decode_subprocess_output(data):
@@ -732,14 +700,12 @@ def fuse_and_cut(video_path, output_dir, video_name):
     removed.extend(dropped_as_interference)
 
     clips_for_index = [_format_clip_time_fields(c) for c in clips]
-    grouped_clips = build_grouped_clips(clips_for_index)
     final_index = {
         "video_name":       video_name,
         "video_path":       str(video_path),
         "processed_at":     datetime.datetime.now().isoformat(timespec="seconds"),
         "total_clips":      len(clips),
         "clips":            clips_for_index,
-        "grouped_clips":    grouped_clips,
         "removed_segments": removed,
         "stats": {
             "total_output_clips":      len([c for c in clips if c.get("status") == "ok"]),
