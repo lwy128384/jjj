@@ -136,7 +136,7 @@ STEP2_SCRIPT_CONVERSION_MODE = "t2s"
 SEMANTIC_WINDOW_SIZE    = 3    # 滑动窗口大小（语音段数）
 BOUNDARY_THRESHOLD      = 0.35 # 余弦距离阈值（超过 → 潜在边界）
 MIN_KNOWLEDGE_DURATION  = 45   # 最短知识点时长（秒）
-MAX_KNOWLEDGE_DURATION  = 600  # 最长知识点时长（秒）
+MAX_KNOWLEDGE_DURATION  = 1200  # 最长知识点时长（秒）
 TOP_KEYWORDS            = 5    # 每知识点关键词数
 MIN_TEXT_LENGTH         = 5    # 最短有效文本长度（字符）
 KEYWORD_TITLE_COUNT     = 2    # 用于知识点标题拼接的关键词数量
@@ -175,7 +175,7 @@ INTERFERENCE_MIN_DURATION         = 5.0   # 最短干扰持续时长（秒）
 INTERFERENCE_RULE_A_ENABLED       = True  # 规则A：教师在场发言但不在知识点内
 INTERFERENCE_RULE_B_ENABLED       = True  # 规则B：师生问答互动
 INTERFERENCE_RULE_A_MIN_DURATION  = 10.0  # 规则A最短持续时长（秒）
-INTERFERENCE_QA_MAX_DURATION      = 60.0  # 规则B问答组合最大时长（秒）
+INTERFERENCE_QA_MAX_DURATION      = 600.0  # 规则B问答组合最大时长（秒）
 INTERFERENCE_QA_MIN_TEXT_LEN      = 3     # 规则B关键词匹配最小文本长度
 INTERFERENCE_QUESTION_CUE_WORDS   = [
     "请回答", "你来", "这位同学", "什么问题", "怎么理解", "请你", "谁来说",
@@ -186,7 +186,7 @@ INTERFERENCE_ANSWER_CUE_WORDS     = [
 INTERFERENCE_SEGMENT_TITLE        = "干扰片段"
 
 SEGMENT_MIN_DURATION = 20.0   # 最短保留片段（秒）
-SEGMENT_PADDING      = 1.0    # 片段首尾缓冲（秒）
+SEGMENT_PADDING      = 5.0    # 片段首尾缓冲（秒）
 
 # ============================================================
 # 训练配置
@@ -200,4 +200,4 @@ INTERFERENCE_NEG_POS_RATIO = 3
 BOUNDARY_MODEL_BASE_THRESHOLD = 0.50
 INTERFERENCE_MODEL_THRESHOLD = 0.50
 BOUNDARY_POST_MIN_GAP = 30.0
-BOUNDARY_POST_MAX_GAP = 300.0
+BOUNDARY_POST_MAX_GAP = 600.0
