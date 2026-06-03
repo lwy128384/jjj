@@ -434,11 +434,12 @@ python train.py --eval ^
 - 0.55 ≤ F1 < 0.70：可接受，建议继续补标注
 - F1 < 0.55：建议补标注并调参
 
-模型文件保存在 `D:\video\models\`：
-- `boundary_model.pkl` — 知识点边界检测模型
-- `interference_model.pkl` — 干扰片段检测模型
+模型文件保存在 `D:\video\models\` 下，按视频分目录：
+- `models/<视频名>/boundary_model.pkl` — 该视频的边界模型
+- `models/<视频名>/interference_model.pkl` — 该视频的干扰模型
+- 兼容历史：根目录 `models/boundary_model.pkl`、`models/interference_model.pkl` 仍可被读取
 
-训练完成后，再次运行 `run_all.py` 时将自动使用这些模型。
+训练完成后，再次运行 `run_all.py` 时将自动加载所有可用模型做投票（概率平均）再决策。
 
 ### 7.4 根据评估优化
 
