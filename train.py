@@ -261,6 +261,17 @@ def extract_features_from_index(multimodal_index, window_sec=10):
     return np.array(feats, dtype=np.float32)
 
 
+def cached_extract_features(multimodal_index, cache_path):
+    """优先读取特征缓存；不存在时提取并写入缓存。"""
+    if cache_path and os.path.exists(cache_path):
+        return np.load(cache_path)
+    X = extract_features_from_index(multimodal_index)
+    if cache_path:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        np.save(cache_path, X)
+    return X
+
+
 def label_from_annotation(series, annotations, tolerance_sec=3.0):
     """
     根据标注生成标签数组。
@@ -329,7 +340,7 @@ def balance_dataset(X, y, neg_pos_ratio=3):
     return X[all_idx], y[all_idx]
 
 
-def train_model(X, y, model_type="boundary"):
+def train_model(X, y, model_type="boundary", optimize_metric="f1", beta=1.0):
     """
     使用 RandomForest 训练分类器。
     Returns: trained model, metrics dict
@@ -337,7 +348,7 @@ def train_model(X, y, model_type="boundary"):
     try:
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.model_selection import train_test_split
-        from sklearn.metrics import classification_report, f1_score
+        from sklearn.metrics import classification_report, f1_score, fbeta_score, precision_recall_fscore_support
         from sklearn.preprocessing import StandardScaler
         from sklearn.utils.class_weight import compute_class_weight
     except ImportError:
@@ -380,16 +391,48 @@ def train_model(X, y, model_type="boundary"):
     )
     clf.fit(X_train_s, y_train)
 
-    y_pred = clf.predict(X_test_s)
+    proba = clf.predict_proba(X_test_s)
+    pos_scores = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else clf.predict(X_test_s).astype(float)
+
+    threshold_grid = np.round(np.arange(0.35, 0.75 + 1e-9, 0.05), 2)
+    best_threshold = 0.50
+    best_metric = -1.0
+    for th in threshold_grid:
+        preds = (pos_scores >= float(th)).astype(int)
+        if optimize_metric == "f-beta":
+            score = fbeta_score(y_test, preds, beta=float(beta), average="binary", zero_division=0)
+        else:
+            score = f1_score(y_test, preds, average="binary", zero_division=0)
+        if score > best_metric:
+            best_metric = score
+            best_threshold = float(th)
+
+    y_pred = (pos_scores >= best_threshold).astype(int)
     report = classification_report(y_test, y_pred, zero_division=0)
-    f1     = f1_score(y_test, y_pred, average="weighted", zero_division=0)
+    weighted_f1 = f1_score(y_test, y_pred, average="weighted", zero_division=0)
+    fbeta_binary = fbeta_score(y_test, y_pred, beta=float(beta), average="binary", zero_division=0)
+    precision, recall, f1_binary, _ = precision_recall_fscore_support(
+        y_test, y_pred, average="binary", zero_division=0
+    )
 
     print(f"\n  [{model_type} 模型] 评估报告:")
     print(report)
-    print(f"  加权 F1: {f1:.4f}")
+    print(f"  最优阈值: {best_threshold:.2f}")
+    print(f"  加权 F1: {weighted_f1:.4f}")
     print(f"  类别权重: {class_weights}")
 
-    return clf, scaler, {"f1": round(f1, 4), "report": report}
+    return clf, scaler, {
+        "f1": round(weighted_f1, 4),
+        "report": report,
+        "best_threshold": round(best_threshold, 2),
+        "precision": round(float(precision), 4),
+        "recall": round(float(recall), 4),
+        "f1_binary": round(float(f1_binary), 4),
+        "f_beta_binary": round(float(fbeta_binary), 4),
+        "opt_metric": optimize_metric,
+        "opt_metric_value": round(float(best_metric), 4),
+        "opt_beta": float(beta),
+    }
 
 
 def save_model(clf, scaler, meta, model_type):
@@ -499,7 +542,8 @@ def train_on_video(video_path, annotation_path):
     print(f"  标注片段数: {len(annotations)}")
 
     series = mindex["time_series"]
-    X      = extract_features_from_index(mindex)
+    cache_path = os.path.join(out_dir, "features.npy")
+    X      = cached_extract_features(mindex, cache_path)
     b_lbl, i_lbl = label_from_annotation(series, annotations)
 
     print(f"  特征矩阵: {X.shape}  边界正样本: {b_lbl.sum()}  干扰正样本: {i_lbl.sum()}")
@@ -514,7 +558,7 @@ def train_models_for_video(X, b, i, video_name):
         print("\n  训练边界检测模型…")
         clf_b, scaler_b, meta_b = train_model(X, b, "boundary")
         path_b = save_scoped_model(clf_b, scaler_b, meta_b, "boundary", model_scope=video_name)
-        results["boundary"] = {"path": path_b, "f1": meta_b["f1"]}
+        results["boundary"] = {"path": path_b, "f1": meta_b["f1"], "best_threshold": meta_b.get("best_threshold")}
     else:
         print("  边界正样本不足（<2），跳过边界模型训练")
 
@@ -522,7 +566,7 @@ def train_models_for_video(X, b, i, video_name):
         print("\n  训练干扰检测模型…")
         clf_i, scaler_i, meta_i = train_model(X, i, "interference")
         path_i = save_scoped_model(clf_i, scaler_i, meta_i, "interference", model_scope=video_name)
-        results["interference"] = {"path": path_i, "f1": meta_i["f1"]}
+        results["interference"] = {"path": path_i, "f1": meta_i["f1"], "best_threshold": meta_i.get("best_threshold")}
     else:
         print("  干扰正样本不足（<2），跳过干扰模型训练")
 
@@ -547,19 +591,7 @@ def predict_boundaries(mindex):
             if bool(pt.get("is_knowledge_boundary", False))
         ]
 
-        slide_ratio = sum(1 for p in mindex["time_series"] if p.get("is_slide_transition")) / max(len(times), 1)
-        silence_ratio = sum(1 for p in mindex["time_series"] if p.get("is_silence")) / max(len(times), 1)
-        threshold = float(BOUNDARY_MODEL_BASE_THRESHOLD)
-        if slide_ratio >= 0.04:
-            threshold += 0.05
-        if silence_ratio >= 0.30:
-            threshold += 0.03
-        if slide_ratio <= 0.01 and silence_ratio <= 0.15:
-            threshold -= 0.05
-        threshold = min(max(threshold, MIN_BOUNDARY_DYNAMIC_THRESHOLD),
-                        MAX_BOUNDARY_DYNAMIC_THRESHOLD)
-
-        all_scores = []
+        model_times = []
         for m in models:
             try:
                 X_s = m["scaler"].transform(X)
@@ -568,15 +600,14 @@ def predict_boundaries(mindex):
                     scores = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
                 else:
                     scores = np.asarray(m["clf"].predict(X_s), dtype=float)
-                all_scores.append(np.asarray(scores, dtype=float))
+                model_threshold = _safe_float(m.get("meta", {}).get("best_threshold"), BOUNDARY_MODEL_BASE_THRESHOLD)
+                one_model_times = [t for t, p in zip(times, scores) if float(p) >= float(model_threshold)]
+                model_times.extend(one_model_times)
             except Exception as e:
                 print(f"  跳过不可用边界模型 {m['path']}: {e}")
 
-        if not all_scores:
+        if not model_times and not rule_times:
             return []
-        avg_scores = np.mean(np.vstack(all_scores), axis=0)
-        model_times = [t for t, p in zip(times, avg_scores) if float(p) >= threshold]
-
         merged_times = sorted(set([round(float(t), 2) for t in (model_times + rule_times)]))
         return post_process_boundaries(
             merged_times,
@@ -595,7 +626,7 @@ def predict_interference(mindex):
         models = load_models("interference")
         times = [pt["time"] for pt in mindex["time_series"]]
 
-        all_scores = []
+        merged_times = []
         for m in models:
             try:
                 X_s = m["scaler"].transform(X)
@@ -604,13 +635,13 @@ def predict_interference(mindex):
                     scores = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
                 else:
                     scores = np.asarray(m["clf"].predict(X_s), dtype=float)
-                all_scores.append(np.asarray(scores, dtype=float))
+                model_threshold = _safe_float(m.get("meta", {}).get("best_threshold"), INTERFERENCE_MODEL_THRESHOLD)
+                merged_times.extend([t for t, p in zip(times, scores) if float(p) >= float(model_threshold)])
             except Exception as e:
                 print(f"  跳过不可用干扰模型 {m['path']}: {e}")
-        if not all_scores:
+        if not merged_times:
             return []
-        avg_scores = np.mean(np.vstack(all_scores), axis=0)
-        return [t for t, p in zip(times, avg_scores) if float(p) >= float(INTERFERENCE_MODEL_THRESHOLD)]
+        return sorted(set(round(float(t), 2) for t in merged_times))
     except Exception:
         return []
 
@@ -688,7 +719,8 @@ def evaluate(video_path, annotation_path):
     ann    = load_json(annotation_path)
     annotations = ann.get("annotations", [])
     series = mindex["time_series"]
-    X = extract_features_from_index(mindex)
+    cache_path = os.path.join(out_dir, "features.npy")
+    X = cached_extract_features(mindex, cache_path)
     b_lbl, i_lbl = label_from_annotation(series, annotations)
 
     for model_type, true_lbl in [("boundary", b_lbl), ("interference", i_lbl)]:
