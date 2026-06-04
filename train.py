@@ -393,12 +393,21 @@ def train_model(X, y, model_type="boundary"):
 
 
 def save_model(clf, scaler, meta, model_type):
-    """保存模型到 MODELS_DIR"""
+    """兼容旧接口：保存模型到 MODELS_DIR 根目录"""
+    return save_scoped_model(clf, scaler, meta, model_type=model_type, model_scope=None)
+
+
+def save_scoped_model(clf, scaler, meta, model_type, model_scope=None):
+    """保存模型到 MODELS_DIR/<model_scope>/（scope 为空则保存到根目录）"""
     try:
         import pickle
-        os.makedirs(MODELS_DIR, exist_ok=True)
+        if model_scope:
+            save_dir = os.path.join(MODELS_DIR, str(model_scope))
+        else:
+            save_dir = MODELS_DIR
+        os.makedirs(save_dir, exist_ok=True)
         fname = f"{model_type}_model.pkl"
-        path  = os.path.join(MODELS_DIR, fname)
+        path  = os.path.join(save_dir, fname)
         with open(path, "wb") as f:
             pickle.dump({"clf": clf, "scaler": scaler, "meta": meta}, f)
         print(f"  模型已保存: {path}")
@@ -409,14 +418,54 @@ def save_model(clf, scaler, meta, model_type):
 
 
 def load_model(model_type):
-    """从 MODELS_DIR 加载模型"""
+    """兼容旧接口：从可用模型集中取第一个模型"""
+    models = load_models(model_type)
+    if not models:
+        raise FileNotFoundError(f"模型文件不存在: {os.path.join(MODELS_DIR, f'{model_type}_model.pkl')}")
+    first = models[0]
+    return first["clf"], first["scaler"]
+
+
+def load_models(model_type):
+    """加载 MODELS_DIR 根目录与各子目录下的同类型模型。"""
     import pickle
-    path = os.path.join(MODELS_DIR, f"{model_type}_model.pkl")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"模型文件不存在: {path}")
-    with open(path, "rb") as f:
-        obj = pickle.load(f)
-    return obj["clf"], obj["scaler"]
+    model_paths = []
+    root_path = os.path.join(MODELS_DIR, f"{model_type}_model.pkl")
+    if os.path.exists(root_path):
+        model_paths.append(root_path)
+
+    if os.path.isdir(MODELS_DIR):
+        for name in sorted(os.listdir(MODELS_DIR)):
+            sub_dir = os.path.join(MODELS_DIR, name)
+            if not os.path.isdir(sub_dir):
+                continue
+            path = os.path.join(sub_dir, f"{model_type}_model.pkl")
+            if os.path.exists(path):
+                model_paths.append(path)
+
+    if not model_paths:
+        raise FileNotFoundError(f"未找到任何 {model_type} 模型: {MODELS_DIR}")
+
+    loaded = []
+    for path in model_paths:
+        try:
+            with open(path, "rb") as f:
+                obj = pickle.load(f)
+            scope_name = Path(path).parent.name
+            if os.path.abspath(os.path.dirname(path)) == os.path.abspath(MODELS_DIR):
+                scope_name = "root"
+            loaded.append({
+                "path": path,
+                "scope": scope_name,
+                "clf": obj["clf"],
+                "scaler": obj["scaler"],
+                "meta": obj.get("meta", {}),
+            })
+        except Exception as e:
+            print(f"  跳过损坏模型 {path}: {e}")
+    if not loaded:
+        raise RuntimeError(f"{model_type} 模型文件存在但均不可用")
+    return loaded
 
 
 # ============================================================
@@ -457,19 +506,14 @@ def train_on_video(video_path, annotation_path):
     return X, b_lbl, i_lbl, vname
 
 
-def aggregate_and_train(all_X, all_b, all_i):
-    """聚合多个视频的特征并训练"""
-    X = np.vstack(all_X)
-    b = np.concatenate(all_b)
-    i = np.concatenate(all_i)
-
-    print(f"\n  总样本: {X.shape[0]}  边界正例: {b.sum()}  干扰正例: {i.sum()}")
-
+def train_models_for_video(X, b, i, video_name):
+    """按视频独立训练并保存模型到 MODELS_DIR/<video_name>/"""
+    print(f"\n  当前视频样本: {X.shape[0]}  边界正例: {b.sum()}  干扰正例: {i.sum()}")
     results = {}
     if b.sum() >= 2:
         print("\n  训练边界检测模型…")
         clf_b, scaler_b, meta_b = train_model(X, b, "boundary")
-        path_b = save_model(clf_b, scaler_b, meta_b, "boundary")
+        path_b = save_scoped_model(clf_b, scaler_b, meta_b, "boundary", model_scope=video_name)
         results["boundary"] = {"path": path_b, "f1": meta_b["f1"]}
     else:
         print("  边界正样本不足（<2），跳过边界模型训练")
@@ -477,7 +521,7 @@ def aggregate_and_train(all_X, all_b, all_i):
     if i.sum() >= 2:
         print("\n  训练干扰检测模型…")
         clf_i, scaler_i, meta_i = train_model(X, i, "interference")
-        path_i = save_model(clf_i, scaler_i, meta_i, "interference")
+        path_i = save_scoped_model(clf_i, scaler_i, meta_i, "interference", model_scope=video_name)
         results["interference"] = {"path": path_i, "f1": meta_i["f1"]}
     else:
         print("  干扰正样本不足（<2），跳过干扰模型训练")
@@ -495,9 +539,8 @@ def predict_boundaries(mindex):
     若模型不存在则静默返回空列表。
     """
     try:
-        clf, scaler = load_model("boundary")
         X = extract_features_from_index(mindex)
-        X_s = scaler.transform(X)
+        models = load_models("boundary")
         times = [pt["time"] for pt in mindex["time_series"]]
         rule_times = [
             t for t, pt in zip(times, mindex["time_series"])
@@ -516,13 +559,23 @@ def predict_boundaries(mindex):
         threshold = min(max(threshold, MIN_BOUNDARY_DYNAMIC_THRESHOLD),
                         MAX_BOUNDARY_DYNAMIC_THRESHOLD)
 
-        if hasattr(clf, "predict_proba"):
-            proba = clf.predict_proba(X_s)
-            pos_proba = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
-            model_times = [t for t, p in zip(times, pos_proba) if float(p) >= threshold]
-        else:
-            preds = clf.predict(X_s)
-            model_times = [t for t, p in zip(times, preds) if p == 1]
+        all_scores = []
+        for m in models:
+            try:
+                X_s = m["scaler"].transform(X)
+                if hasattr(m["clf"], "predict_proba"):
+                    proba = m["clf"].predict_proba(X_s)
+                    scores = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
+                else:
+                    scores = np.asarray(m["clf"].predict(X_s), dtype=float)
+                all_scores.append(np.asarray(scores, dtype=float))
+            except Exception as e:
+                print(f"  跳过不可用边界模型 {m['path']}: {e}")
+
+        if not all_scores:
+            return []
+        avg_scores = np.mean(np.vstack(all_scores), axis=0)
+        model_times = [t for t, p in zip(times, avg_scores) if float(p) >= threshold]
 
         merged_times = sorted(set([round(float(t), 2) for t in (model_times + rule_times)]))
         return post_process_boundaries(
@@ -538,16 +591,26 @@ def predict_boundaries(mindex):
 def predict_interference(mindex):
     """使用已训练的模型预测干扰时刻列表"""
     try:
-        clf, scaler = load_model("interference")
         X   = extract_features_from_index(mindex)
-        X_s = scaler.transform(X)
+        models = load_models("interference")
         times = [pt["time"] for pt in mindex["time_series"]]
-        if hasattr(clf, "predict_proba"):
-            proba = clf.predict_proba(X_s)
-            pos_proba = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
-            return [t for t, p in zip(times, pos_proba) if float(p) >= float(INTERFERENCE_MODEL_THRESHOLD)]
-        preds = clf.predict(X_s)
-        return [t for t, p in zip(times, preds) if p == 1]
+
+        all_scores = []
+        for m in models:
+            try:
+                X_s = m["scaler"].transform(X)
+                if hasattr(m["clf"], "predict_proba"):
+                    proba = m["clf"].predict_proba(X_s)
+                    scores = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(times))
+                else:
+                    scores = np.asarray(m["clf"].predict(X_s), dtype=float)
+                all_scores.append(np.asarray(scores, dtype=float))
+            except Exception as e:
+                print(f"  跳过不可用干扰模型 {m['path']}: {e}")
+        if not all_scores:
+            return []
+        avg_scores = np.mean(np.vstack(all_scores), axis=0)
+        return [t for t, p in zip(times, avg_scores) if float(p) >= float(INTERFERENCE_MODEL_THRESHOLD)]
     except Exception:
         return []
 
@@ -630,13 +693,43 @@ def evaluate(video_path, annotation_path):
 
     for model_type, true_lbl in [("boundary", b_lbl), ("interference", i_lbl)]:
         try:
-            clf, scaler = load_model(model_type)
             from sklearn.metrics import classification_report
-            preds  = clf.predict(scaler.transform(X))
+            models = load_models(model_type)
+            all_scores = []
+            for m in models:
+                try:
+                    X_s = m["scaler"].transform(X)
+                    if hasattr(m["clf"], "predict_proba"):
+                        proba = m["clf"].predict_proba(X_s)
+                        scores = proba[:, 1] if proba.ndim == 2 and proba.shape[1] > 1 else np.zeros(len(true_lbl))
+                    else:
+                        scores = np.asarray(m["clf"].predict(X_s), dtype=float)
+                    all_scores.append(np.asarray(scores, dtype=float))
+                except Exception as e:
+                    print(f"  跳过不可用模型 {m['path']}: {e}")
+            if not all_scores:
+                print(f"[{model_type}] 无可用模型，跳过")
+                continue
+            avg_scores = np.mean(np.vstack(all_scores), axis=0)
+            if model_type == "boundary":
+                times = [pt["time"] for pt in series]
+                slide_ratio = sum(1 for p in series if p.get("is_slide_transition")) / max(len(times), 1)
+                silence_ratio = sum(1 for p in series if p.get("is_silence")) / max(len(times), 1)
+                threshold = float(BOUNDARY_MODEL_BASE_THRESHOLD)
+                if slide_ratio >= 0.04:
+                    threshold += 0.05
+                if silence_ratio >= 0.30:
+                    threshold += 0.03
+                if slide_ratio <= 0.01 and silence_ratio <= 0.15:
+                    threshold -= 0.05
+                threshold = min(max(threshold, MIN_BOUNDARY_DYNAMIC_THRESHOLD), MAX_BOUNDARY_DYNAMIC_THRESHOLD)
+            else:
+                threshold = float(INTERFERENCE_MODEL_THRESHOLD)
+            preds = (avg_scores >= threshold).astype(int)
             report = classification_report(true_lbl, preds, zero_division=0)
-            print(f"\n[{model_type}] 评估结果:")
+            print(f"\n[{model_type}] 集成评估结果（模型数={len(all_scores)}）:")
             print(report)
-        except FileNotFoundError:
+        except (FileNotFoundError, RuntimeError):
             print(f"[{model_type}] 模型未找到，跳过")
 
 
@@ -828,26 +921,28 @@ def main():
         print("未找到任何视频-标注对")
         sys.exit(1)
 
-    all_X, all_b, all_i = [], [], []
+    all_results = []
     for vpath, apath in pairs:
         print(f"\n处理: {os.path.basename(vpath)}")
         try:
-            X, b, i, _ = train_on_video(vpath, apath)
-            all_X.append(X)
-            all_b.append(b)
-            all_i.append(i)
+            X, b, i, vname = train_on_video(vpath, apath)
+            results = train_models_for_video(X, b, i, vname)
+            all_results.append((vname, results))
         except Exception as e:
             print(f"  出错（跳过）: {e}")
             traceback.print_exc()
 
-    if not all_X:
+    if not all_results:
         print("没有可用的训练数据")
         sys.exit(1)
 
-    results = aggregate_and_train(all_X, all_b, all_i)
     print("\n训练完成！模型保存在:", MODELS_DIR)
-    for mtype, info in results.items():
-        print(f"  {mtype}: F1={info['f1']:.4f}  →  {info['path']}")
+    for vname, results in all_results:
+        if not results:
+            print(f"  {vname}: 无可训练模型（正样本不足）")
+            continue
+        for mtype, info in results.items():
+            print(f"  {vname}/{mtype}: F1={info['f1']:.4f}  →  {info['path']}")
 
 
 if __name__ == "__main__":
