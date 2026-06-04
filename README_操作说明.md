@@ -108,6 +108,8 @@ D:\video\
   step5_fusion.py
   run_all.py
   train.py
+  precompute_features.py
+  auto_tune.py
   requirements.txt
   README_操作说明.md
 ```
@@ -216,6 +218,8 @@ D:\video\
 ├── step5_fusion.py
 ├── run_all.py
 ├── train.py
+├── precompute_features.py
+├── auto_tune.py
 └── requirements.txt
 ```
 
@@ -419,6 +423,9 @@ python train.py --annotation_dir D:\video\annotations\
 
 系统会自动在 `lesson/` 目录下寻找同名视频进行配对。
 
+> **重要（批量训练命名规则）**：`annotation_dir` 下每个 JSON 文件名（不含扩展名）必须与对应视频文件名完全一致。  
+> 例如视频是 `D:\video\lesson\高数第一章.mp4`，标注文件应为 `D:\video\annotations\高数第一章.json`（不是 `高数第一章_annotation.json`）。
+
 > **注意**：`^` 是 cmd 中的换行符，可以写成一行
 
 ### 7.3 评估
@@ -462,6 +469,46 @@ python run_all.py --video D:\video\lesson\高数第一章.mp4 --step 5
 ```cmd
 python run_all.py
 ```
+
+### 7.6 根据标注直接导出知识点视频（不训练）
+
+适用场景：需要按人工标注直接切片，且同名知识点要自动合并。
+
+```cmd
+python train.py --export ^
+  --video D:\video\lesson\高数第一章.mp4 ^
+  --annotation D:\video\annotations\高数第一章_annotation.json
+```
+
+输出目录：`D:\video\output\高数第一章\annotated_segments\`
+
+### 7.7 预计算训练特征缓存（可选，提升批量训练速度）
+
+```cmd
+python precompute_features.py
+```
+
+常用参数：
+
+```cmd
+python precompute_features.py --output-dir D:\video\output
+python precompute_features.py --force
+```
+
+### 7.8 自动调参（可选）
+
+```cmd
+python auto_tune.py ^
+  --video D:\video\lesson\高数第一章.mp4 ^
+  --annotation D:\video\annotations\高数第一章_annotation.json ^
+  --output D:\video\output\高数第一章\autotune_result.json
+```
+
+常用参数：
+- `--trials`：迭代次数（默认 50）
+- `--mode`：`f1` / `f-beta` / `business`
+- `--plot`：保存收敛曲线 PNG
+- `--apply-config`：将全局中位数参数写回 `config.py`
 
 ---
 
@@ -676,8 +723,20 @@ python step5_fusion.py --video D:\video\lesson\example.mp4
 :: 训练
 python train.py --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
 
+:: 批量训练（注意：annotations 下 JSON 文件名需与 lesson 下视频同名）
+python train.py --annotation_dir D:\video\annotations\
+
 :: 评估
 python train.py --eval --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
+
+:: 标注直接导出（同名知识点自动合并）
+python train.py --export --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json
+
+:: 预计算训练特征缓存
+python precompute_features.py
+
+:: 自动调参（Optuna）
+python auto_tune.py --video D:\video\lesson\example.mp4 --annotation D:\video\annotations\example_annotation.json --output D:\video\output\example\autotune_result.json
 
 :: 只重跑步骤5（使用训练模型重剪）
 python run_all.py --video D:\video\lesson\example.mp4 --step 5
