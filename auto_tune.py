@@ -52,6 +52,12 @@ def metric_label(mode, model_type):
     return "F1"
 
 
+def metric_json_key(mode, model_type):
+    if mode == "f-beta":
+        return "f1.5" if model_type == "boundary" else "f0.5"
+    return "f1"
+
+
 def train_once(X, b_lbl, i_lbl, mode):
     b_beta = 1.5 if mode == "f-beta" else 1.0
     i_beta = 0.5 if mode == "f-beta" else 1.0
@@ -246,6 +252,7 @@ def main():
                 "recall": float(meta_b["recall"]),
                 "f1": float(meta_b["f1_binary"]),
                 "f_beta": float(meta_b["f_beta_binary"]),
+                metric_json_key(args.mode, "boundary"): float(boundary_metric),
                 "best_threshold": float(meta_b["best_threshold"]),
             },
             "interference": {
@@ -253,6 +260,7 @@ def main():
                 "recall": float(meta_i["recall"]),
                 "f1": float(meta_i["f1_binary"]),
                 "f_beta": float(meta_i["f_beta_binary"]),
+                metric_json_key(args.mode, "interference"): float(interference_metric),
                 "best_threshold": float(meta_i["best_threshold"]),
             },
             "business": business_metrics,
@@ -303,12 +311,20 @@ def main():
                 "recall": float(best_record["boundary"]["recall"]) if best_record else float(meta_b["recall"]),
                 "f1": float(best_record["boundary"]["f1"]) if best_record else float(meta_b["f1_binary"]),
                 "f_beta": float(best_record["boundary"]["f_beta"]) if best_record else float(meta_b["f_beta_binary"]),
+                metric_json_key(args.mode, "boundary"): (
+                    float(best_record["boundary"][metric_json_key(args.mode, "boundary")])
+                    if best_record else float(meta_b[score_key(args.mode, "boundary")])
+                ),
             },
             "interference": {
                 "precision": float(best_record["interference"]["precision"]) if best_record else float(meta_i["precision"]),
                 "recall": float(best_record["interference"]["recall"]) if best_record else float(meta_i["recall"]),
                 "f1": float(best_record["interference"]["f1"]) if best_record else float(meta_i["f1_binary"]),
                 "f_beta": float(best_record["interference"]["f_beta"]) if best_record else float(meta_i["f_beta_binary"]),
+                metric_json_key(args.mode, "interference"): (
+                    float(best_record["interference"][metric_json_key(args.mode, "interference")])
+                    if best_record else float(meta_i[score_key(args.mode, "interference")])
+                ),
             },
         },
         "trials": int(args.trials),
